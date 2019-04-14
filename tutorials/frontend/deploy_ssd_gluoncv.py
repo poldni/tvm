@@ -1,3 +1,19 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 """
 Deploy Single Shot Multibox Detector(SSD) model
 ===============================================
@@ -12,19 +28,13 @@ from matplotlib import pyplot as plt
 from tvm.relay.testing.config import ctx_list
 from tvm import relay
 from tvm.contrib import graph_runtime
+from tvm.contrib.download import download_testdata
 from gluoncv import model_zoo, data, utils
 
 
 ######################################################################
 # Preliminary and Set parameters
 # ------------------------------
-# We should build TVM with sort support, in TVM root directory
-#
-# .. code-block:: bash
-#
-#   echo "set(USE_SORT ON)" > config.mk
-#   make -j8
-#
 # .. note::
 #
 #   Currently we support compiling SSD on CPU only.
@@ -56,9 +66,9 @@ target_list = ctx_list()
 ######################################################################
 # Download and pre-process demo image
 
-im_fname = utils.download('https://github.com/dmlc/web-data/blob/master/' +
-                          'gluoncv/detection/street_small.jpg?raw=true',
-                          path='street_small.jpg')
+im_fname = download_testdata('https://github.com/dmlc/web-data/blob/master/' +
+                             'gluoncv/detection/street_small.jpg?raw=true',
+                             'street_small.jpg', module='data')
 x, img = data.transforms.presets.ssd.load_test(im_fname, short=512)
 
 ######################################################################

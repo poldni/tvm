@@ -1,5 +1,23 @@
 #!groovy
 // -*- mode: groovy -*-
+
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 // Jenkins pipeline
 // See documents at https://jenkins.io/doc/book/pipeline/jenkinsfile/
 
@@ -21,8 +39,8 @@
 // - Periodically cleanup the old versions on local workers
 //
 ci_lint = "tvmai/ci-lint:v0.50"
-ci_gpu = "tvmai/ci-gpu:v0.50"
-ci_cpu = "tvmai/ci-cpu:v0.41"
+ci_gpu = "tvmai/ci-gpu:v0.51"
+ci_cpu = "tvmai/ci-cpu:v0.50"
 ci_i386 = "tvmai/ci-i386:v0.50"
 
 // tvm libraries
@@ -115,6 +133,8 @@ stage('Build') {
            echo set\\(USE_CUDA ON\\) >> config.cmake
            echo set\\(USE_OPENGL ON\\) >> config.cmake
            echo set\\(USE_LLVM llvm-config-6.0\\) >> config.cmake
+           echo set\\(USE_NNPACK ON\\) >> config.cmake
+           echo set\\(NNPACK_PATH /NNPACK/build/\\) >> config.cmake
            echo set\\(USE_RPC ON\\) >> config.cmake
            echo set\\(USE_SORT ON\\) >> config.cmake
            echo set\\(USE_GRAPH_RUNTIME ON\\) >> config.cmake
@@ -196,7 +216,7 @@ stage('Build') {
 }
 
 stage('Unit Test') {
-  parallel 'python2/3: GPU': {
+  parallel 'python3: GPU': {
     node('GPU') {
       ws('workspace/tvm/ut-python-gpu') {
         init_git()
@@ -208,7 +228,7 @@ stage('Unit Test') {
       }
     }
   },
-  'python2/3: i386': {
+  'python3: i386': {
     node('CPU') {
       ws('workspace/tvm/ut-python-i386') {
         init_git()

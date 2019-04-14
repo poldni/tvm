@@ -1,3 +1,19 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 # pylint: disable=no-else-return, unidiomatic-typecheck, invalid-name
 """Adds certain standard global functions and ADT definitions to the module."""
 from .ty import GlobalTypeVar, TypeVar, FuncType, TupleType, scalar_type
@@ -29,7 +45,6 @@ class Prelude:
         x = Var("x", self.l(a))
         y = Var("y")
         z = Var("z")
-        # Don't match nil() since it will break type checking
         cons_case = Clause(PatternConstructor(self.cons, [PatternVar(y), PatternVar(z)]), y)
         self.mod[self.hd] = Function([x], Match(x, [cons_case]), a, [a])
 
@@ -43,9 +58,8 @@ class Prelude:
         x = Var("x", self.l(a))
         y = Var("y")
         z = Var("z")
-        nil_case = Clause(PatternConstructor(self.nil, []), self.nil())
         cons_case = Clause(PatternConstructor(self.cons, [PatternVar(y), PatternVar(z)]), z)
-        self.mod[self.tl] = Function([x], Match(x, [nil_case, cons_case]), self.l(a), [a])
+        self.mod[self.tl] = Function([x], Match(x, [cons_case]), self.l(a), [a])
 
     def define_list_nth(self):
         """Defines a function to get the nth element of a list.
@@ -61,6 +75,25 @@ class Prelude:
         z_case = Clause(PatternConstructor(self.z), self.hd(x))
         s_case = Clause(PatternConstructor(self.s, [PatternVar(y)]), self.nth(self.tl(x), y))
         self.mod[self.nth] = Function([x, n], Match(n, [z_case, s_case]), a, [a])
+
+    def define_list_update(self):
+        """Defines a function to update the nth element of a list and return the updated list.
+
+        update(l, i, v) : list[a] -> nat -> a -> list[a]
+        """
+        self.update = GlobalVar("update")
+        a = TypeVar("a")
+        l = Var("l", self.l(a))
+        n = Var("n", self.nat())
+        v = Var("v", a)
+
+        y = Var("y")
+
+        z_case = Clause(PatternConstructor(self.z), self.cons(v, self.tl(l)))
+        s_case = Clause(PatternConstructor(self.s, [PatternVar(y)]),
+                        self.cons(self.hd(l), self.update(self.tl(l), y, v)))
+
+        self.mod[self.update] = Function([l, n, v], Match(n, [z_case, s_case]), self.l(a), [a])
 
     def define_list_map(self):
         """Defines a function for mapping a function over a list's
@@ -124,6 +157,29 @@ class Prelude:
                            f(y, self.foldr(f, bv, z)))
         self.mod[self.foldr] = Function([f, bv, av],
                                         Match(av, [nil_case, cons_case]), b, [a, b])
+
+    def define_list_foldr1(self):
+        """Defines a right-way fold over a nonempty list.
+
+        foldr1(f, l) : fn<a>(fn(a, a) -> a, list[a]) -> a
+
+        foldr1(f, cons(a1, cons(a2, cons(..., cons(an, nil)))))
+        evalutes to f(a1, f(a2, f(..., f(an-1, an)))...)
+        """
+        self.foldr1 = GlobalVar("foldr1")
+        a = TypeVar("a")
+        f = Var("f", FuncType([a, a], a))
+        av = Var("av", self.l(a))
+        x = Var("x")
+        y = Var("y")
+        z = Var("z")
+        one_case = Clause(PatternConstructor(self.cons,
+                                             [PatternVar(x), PatternConstructor(self.nil)]), x)
+        cons_case = Clause(PatternConstructor(self.cons, [PatternVar(y), PatternVar(z)]),
+                           f(y, self.foldr1(f, z)))
+        self.mod[self.foldr1] = Function([f, av],
+                                         Match(av, [one_case, cons_case]), a, [a])
+
 
     def define_list_concat(self):
         """Defines a function that concatenates two lists.
@@ -454,6 +510,7 @@ class Prelude:
         self.define_list_map()
         self.define_list_foldl()
         self.define_list_foldr()
+        self.define_list_foldr1()
         self.define_list_concat()
         self.define_list_filter()
         self.define_list_zip()
@@ -470,6 +527,7 @@ class Prelude:
         self.define_nat_add()
         self.define_list_length()
         self.define_list_nth()
+        self.define_list_update()
         self.define_list_sum()
 
         self.define_tree_adt()

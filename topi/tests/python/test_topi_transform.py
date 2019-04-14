@@ -1,3 +1,19 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 """Test code for broadcasting operators."""
 import numpy as np
 import tvm
@@ -232,16 +248,16 @@ def verify_flip(in_shape, axis):
     for device in ["llvm", "cuda", "opencl", "sdaccel", "aocl_sw_emu"]:
         check_device(device)
 
-def verify_take(src_shape, indices_src, axis=None):
+def verify_take(src_shape, indices_src, axis=None, mode="clip"):
     src_dtype = "float32"
     indices_dtype = "int32"
     indices_src = np.array(indices_src, dtype=indices_dtype)
     A = tvm.placeholder(shape=src_shape, dtype=src_dtype, name="A")
     indices = tvm.placeholder(shape=indices_src.shape, dtype=indices_dtype, name="indices")
     if axis is None:
-        out_tensor = topi.take(a=A, indices=indices)
+        out_tensor = topi.take(a=A, indices=indices, mode=mode)
     else:
-        out_tensor = topi.take(a=A, indices=indices, axis=axis)
+        out_tensor = topi.take(a=A, indices=indices, axis=axis, mode=mode)
 
     def check_device(device):
         ctx = tvm.context(device, 0)
@@ -259,9 +275,9 @@ def verify_take(src_shape, indices_src, axis=None):
         data_npy = np.arange(shape_size, dtype=src_dtype).reshape((src_shape))
 
         if axis is None:
-            out_npys = np.take(data_npy, indices_src)
+            out_npys = np.take(data_npy, indices_src, mode=mode)
         else:
-            out_npys = np.take(data_npy, indices_src, axis=axis)
+            out_npys = np.take(data_npy, indices_src, axis=axis, mode=mode)
         data_nd = tvm.nd.array(data_npy, ctx)
         indices_nd = tvm.nd.array(indices_src, ctx)
         out_nd = tvm.nd.empty(out_npys.shape, ctx=ctx, dtype=src_dtype)
@@ -498,6 +514,12 @@ def test_take():
     verify_take((2,2), [[[1,0],[0,1]]], 0)
     verify_take((2,2), [[[1,0],[0,1]]], 1)
     verify_take((4,3,5,6), [[2,1,0,0]], -2)
+    verify_take((3,4), [-5, 20])
+    verify_take((3,4), [-5, 20], mode="wrap")
+    verify_take((3,4), [-1, 2], axis=0)
+    verify_take((3,4), [-1, 2], axis=0, mode="wrap")
+    verify_take((3,4), [-1, 2], axis=1)
+    verify_take((3,4), [-1, 2], axis=1, mode="wrap")
 
 def test_gather_nd():
     for indices_dtype in ['int32', 'float32']:
