@@ -98,7 +98,7 @@ set compute_ip "${ip_path}/vta_compute/solution0/impl/ip/xilinx_com_hls_compute_
 set store_ip "${ip_path}/vta_store/solution0/impl/ip/xilinx_com_hls_store_1_0.zip"
 
 # Create custom project
-create_project -force $proj_name $proj_path -part xc7z020clg484-1
+create_project -force $proj_name $proj_path -part xc7z020clg400-1
 
 # Update IP repository with generated IP
 file mkdir $ip_lib

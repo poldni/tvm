@@ -92,15 +92,16 @@ void load(
   memop_size_T y_size_total = y_pad_0 + y_size + y_pad_1;
   memop_size_T x_size_total = x_pad_0 + x_size + x_pad_1;
   memop_sram_T y_offset = x_size_total * y_pad_0;
+  memop_size_T y_pad_0_y_size = y_pad_0 + y_size;
 // Force this computation to be done with LUTs to avoid using too many DSPs
-#pragma HLS RESOURCE variable = y_offset core = Mul_LUT
+//#pragma HLS RESOURCE variable = y_offset core = Mul_LUT
 
   // Skip padding along y dimension
   sram_idx += y_offset;
 
   // Perform data transfer from DRAM
   for (int y = 0; y < y_size; y++) {
-#pragma HLS PIPELINE rewind
+//#pragma HLS PIPELINE rewind
     // Skip padding along x dimension
     sram_idx += x_pad_0;
     // Perform data transfer
@@ -119,11 +120,12 @@ void load(
     sram_idx += x_pad_1;
   }
 
+
   // Reset SRAM index
   sram_idx = sram_base;
   // Pad x/y edges with zeros
   for (int y = 0; y < y_size_total; y++) {
-    if (y < y_pad_0 || y >= y_pad_0 + y_size) {
+    if (y < y_pad_0 || y >= y_pad_0_y_size) {
       for (int x = 0; x < x_size_total; x++) {
 #pragma HLS PIPELINE II = 1 rewind
         if (memory_type == VTA_MEM_ID_INP) {
@@ -256,7 +258,7 @@ void compute(
     memop_size_T x_size_total = x_pad_0 + x_size + x_pad_1;
     memop_sram_T y_offset = x_size_total * y_pad_0;
 // Force this computation to be done with LUTs to avoid using too many DSPs
-#pragma HLS RESOURCE variable = y_offset core = Mul_LUT
+//#pragma HLS RESOURCE variable = y_offset core = Mul_LUT
 
     if (memory_type == VTA_MEM_ID_UOP) {
       // Perform data transfer
@@ -524,7 +526,7 @@ void store(
   memop_sram_T y_offset = (x_pad_0 + x_size + x_pad_1) * y_pad_0;
   sram_idx += y_offset;
 // Force this computation to be done with LUTs to avoid using too many DSPs
-#pragma HLS RESOURCE variable = y_offset core = Mul_LUT
+//#pragma HLS RESOURCE variable = y_offset core = Mul_LUT
 
   // Copy along y dimension
   for (int y = 0; y < y_size; y++) {

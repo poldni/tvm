@@ -80,7 +80,7 @@ if { [llength $argv] eq 23 } {
 proc init_design {per inp_width wgt_width out_width batch block_in block_out} {
 
 	# Set device number
-	set_part {xc7z020clg484-1}
+	set_part {xc7z020clg400-1}
 
 	# Set the clock frequency
 	create_clock -period $per -name default
@@ -95,8 +95,6 @@ proc init_design {per inp_width wgt_width out_width batch block_in block_out} {
 		set inp_reshape_factor [expr {1024 / (1 << ($inp_width + $block_in))}]
 		set_directive_array_partition -type block -factor $inp_partition_factor -dim 2 "load" inp_mem
 		set_directive_array_partition -type block -factor $inp_partition_factor -dim 2 "compute" inp_mem
-		set_directive_array_reshape -type block -factor $inp_reshape_factor -dim 2 "load" inp_mem
-		set_directive_array_reshape -type block -factor $inp_reshape_factor -dim 2 "compute" inp_mem
 	}
 	# Set weight partition factor to (WGT_VECTOR_WIDTH*BLOCK_OUT/1024)
 	set wgt_partition_factor [expr {(1 << ($wgt_width + $block_in + $block_out)) / 1024}]
@@ -105,11 +103,8 @@ proc init_design {per inp_width wgt_width out_width batch block_in block_out} {
 		set_directive_array_reshape -type complete -dim 2 "compute" wgt_mem
 	} else {
 		# Set weight reshaping factor below to (1024/WGT_VECTOR_WIDTH)
-		set wgt_reshape_factor [expr {1024 / (1 << ($wgt_width + $block_in))}]
 		set_directive_array_partition -type block -factor $wgt_partition_factor -dim 2 "load" wgt_mem
 		set_directive_array_partition -type block -factor $wgt_partition_factor -dim 2 "compute" wgt_mem
-		set_directive_array_reshape -type block -factor $wgt_reshape_factor -dim 2 "load" wgt_mem
-		set_directive_array_reshape -type block -factor $wgt_reshape_factor -dim 2 "compute" wgt_mem
 	}
 	# Set output partition factor to (OUT_VECTOR_WIDTH*BATCH/1024)
 	set out_partition_factor [expr {(1 << ($out_width + $block_out + $batch)) / 1024}]
@@ -121,8 +116,6 @@ proc init_design {per inp_width wgt_width out_width batch block_in block_out} {
 		set out_reshape_factor [expr {1024 / (1 << ($out_width + $block_out))}]
 		set_directive_array_partition -type block -factor $out_partition_factor -dim 2 "compute" out_mem
 		set_directive_array_partition -type block -factor $out_partition_factor -dim 2 "store" out_mem
-		set_directive_array_reshape -type block -factor $out_reshape_factor -dim 2 "compute" out_mem
-		set_directive_array_reshape -type block -factor $out_reshape_factor -dim 2 "store" out_mem
 	}
 }
 
