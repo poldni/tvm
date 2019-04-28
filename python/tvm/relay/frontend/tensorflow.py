@@ -99,7 +99,6 @@ class AttrCvt(object):
         self._ignores.append('_node_name')
         self._ignores.append('is_training')
         self._ignores.append('_target_layout')
-        self._ignores.append('_input_0d_mismatch')
 
         # apply custom check
         if self._custom_check:
@@ -239,7 +238,7 @@ def _argx(func, func_name):
 
 def _elemwise(name):
     def _impl(inputs, attr, *args):
-        assert len(inputs) == 2, "Math op take 2 inputs, {} given".format(len(inputs))
+        assert len(inputs) == 2, "{} take 2 inputs, {} given".format(name, len(inputs))
         return _get_relay_op(name)(*inputs)
     return _impl
 
@@ -458,9 +457,9 @@ def _cast():
 def _expand_dims():
     def _impl(inputs, attr, params):
         dim_input = inputs.pop(1)
-        axis = params[dim_input.name_hint]
-        params.pop(dim_input.name_hint)
-        return _expand_dims_0d_aware(inputs[0], attr, axis=axis.asnumpy()[0])
+        axis = params.pop(_get_name_hint(dim_input)).asnumpy()[0]
+        return AttrCvt(op_name="expand_dims", ignores=['Tdim', 'N'],
+                       extras={'axis': int(axis), 'num_newaxis': 1})(inputs, attr)
     return _impl
 
 def _resize_bilinear():
@@ -528,8 +527,20 @@ def _concat():
 def _pack():
     def _impl(inputs, attr, params):
         axis = int(attr["axis"])
-        inputs_reshaped = [_expand_dims_0d_aware(i, attr, axis=axis, num_newaxis=1) for i in inputs]
+        inputs_reshaped = [_op.expand_dims(i, axis=axis, num_newaxis=1) for i in inputs]
         return _op.concatenate(inputs_reshaped, axis)
+    return _impl
+
+def _tile():
+    def _impl(inputs, attr, params):
+        reps = params[inputs.pop().name_hint].asnumpy()
+        new_input = []
+        new_input.append(inputs.pop(0))
+
+        return AttrCvt(
+            op_name='tile',
+            extras={'reps': tuple(reps)},
+            ignores=['Tmultiples'])(new_input, attr)
     return _impl
 
 def _slice():
@@ -808,9 +819,9 @@ def _stridedSlice():
                 pass
             else:
                 final_output.append(out_shape[gather_index])
-        # Prevent 0-dim tensors which are not accepted by Relay
+
         if not final_output:
-            final_output.append(1)
+            return out
         return _op.reshape(out, newshape=tuple(final_output))
     return _impl
 
@@ -849,6 +860,15 @@ def _transpose():
 def _where():
     def _impl(inputs, attr, params):
         return AttrCvt(op_name="where")(inputs, attr)
+    return _impl
+
+def _reverse_v2():
+    def _impl(inputs, attr, params):
+        axis = params.pop(inputs[1].name_hint).asnumpy()[0]
+        return AttrCvt(
+            op_name="reverse",
+            ignores=['Tidx'],
+            extras={'axis': int(axis)})([inputs[0]], attr)
     return _impl
 
 def _rank():
@@ -963,16 +983,6 @@ def _unpack():
             for split_item in splitted]), len(splitted))
     return _impl
 
-def _expand_dims_0d_aware(data, attr, axis, num_newaxis=1):
-    if data in attr['_input_0d_mismatch']:
-        return data if num_newaxis == 1 else \
-            AttrCvt(op_name="expand_dims", ignores=['Tdim', 'N'],
-                    extras={'axis': int(axis), 'num_newaxis': int(num_newaxis-1)})([data], attr)
-
-    return AttrCvt(op_name="expand_dims", ignores=['Tdim', 'N'],
-                   extras={'axis': int(axis), 'num_newaxis': int(num_newaxis)})([data], attr)
-
-
 def _softmax():
     def _impl(inputs, attr, params):
         return AttrCvt(op_name='softmax',
@@ -1078,6 +1088,7 @@ _identity_list = []
 # for 1 to N mapping(composed), use custom callable functions
 # for N to 1 mapping, currently not supported(?)
 _convert_map = {
+    'Add'                               : _elemwise('add'),
     'ArgMax'                            : _argx(_op.argmax, 'argmax'),
     'ArgMin'                            : _argx(_op.argmin, 'argmin'),
     'AvgPool'                           : _pooling('avg_pool'),
@@ -1090,60 +1101,65 @@ _convert_map = {
     'ConcatV2'                          : _concatV2(),
     'Conv2D'                            : _conv('conv'),
     'DecodeJpeg'                        : _decode_image(),
+    'DepthwiseConv2dNative'             : _conv('depthwise'),
+    'Equal'                             : _broadcast('equal'),
     'Elu'                               : _elu(),
+    'Exp'                               : AttrCvt('exp'),
     'ExpandDims'                        : _expand_dims(),
+    'Fill'                              : _fill(),
     'Floor'                             : AttrCvt('floor'),
-    'Identity'                          : _identity(),
-    'MatMul'                            : _matmul(),
-    'MaxPool'                           : _pooling('max_pool'),
-    'Add'                               : _elemwise('add'),
-    'Sub'                               : _elemwise('subtract'),
-    'Mul'                               : _elemwise('multiply'),
-    'RealDiv'                           : _elemwise('div'),
-    'Maximum'                           : _elemwise('maximum'),
-    'Minimum'                           : _elemwise('minimum'),
-    'Sum'                               : _sum(),
-    'Square'                            : _square(),
-    'Pack'                              : _pack(),
-    'Slice'                             : _slice(),
-    'LeakyRelu'                         : AttrCvt('leaky_relu'),
-    'Relu'                              : AttrCvt('relu'),
-    'Reshape'                           : _reshape(),
-    'ResizeBilinear'                    : _resize_bilinear(),
-    'Selu'                              : _selu(),
-    'Softmax'                           : _softmax(),
-    'Rsqrt'                             : _rsqrt(),
-    'Squeeze'                           : _squeeze(),
     'FusedBatchNorm'                    : _fused_batch_norm(),
     'FusedBatchNormV2'                  : _fused_batch_norm(),
-    'Relu6'                             : _relu6(),
-    'DepthwiseConv2dNative'             : _conv('depthwise'),
-    'Shape'                             : _shape(),
-    'Sigmoid'                           : AttrCvt('sigmoid'),
-    'Select'                            : _where(),
-    'Fill'                              : _fill(),
-    'GatherV2'                          : _gather(),
     'Gather'                            : _gather(),
-    'StridedSlice'                      : _stridedSlice(),
-    'LRN'                               : _lrn(),
-    'Pad'                               : _pad('Pad'),
-    'PadV2'                             : _pad('PadV2'),
-    'Range'                             : _range(),
-    'Rank'                              : _rank(),
-    'Transpose'                         : _transpose(),
-    'Tanh'                              : AttrCvt('tanh'),
-    'Mean'                              : _mean(),
+    'GatherV2'                          : _gather(),
+    'Greater'                           : _broadcast('greater'),
+    'GreaterEqual'                      : _broadcast('greater_equal'),
+    'Identity'                          : _identity(),
+    'LeakyRelu'                         : AttrCvt('leaky_relu'),
+    'Less'                              : _broadcast('less'),
+    'LessEqual'                         : _broadcast('less_equal'),
     'LogicalAnd'                        : _logical('logical_and'),
     'LogicalOr'                         : _logical('logical_or'),
     'LogicalNot'                        : _logical('logical_not'),
-    'Less'                              : _broadcast('less'),
-    'Greater'                           : _broadcast('greater'),
-    'LessEqual'                         : _broadcast('less_equal'),
-    'GreaterEqual'                      : _broadcast('greater_equal'),
-    'Equal'                             : _broadcast('equal'),
+    'LRN'                               : _lrn(),
+    'MatMul'                            : _matmul(),
+    'MaxPool'                           : _pooling('max_pool'),
+    'Maximum'                           : _elemwise('maximum'),
+    'Mean'                              : _mean(),
+    'Minimum'                           : _elemwise('minimum'),
+    'Mul'                               : _elemwise('multiply'),
     'NotEqual'                          : _broadcast('not_equal'),
+    'Pack'                              : _pack(),
+    'Pad'                               : _pad('Pad'),
+    'PadV2'                             : _pad('PadV2'),
+    'Pow'                               : _elemwise('power'),
+    'Range'                             : _range(),
+    'Rank'                              : _rank(),
+    'RealDiv'                           : _elemwise('div'),
+    'Relu'                              : AttrCvt('relu'),
+    'Relu6'                             : _relu6(),
+    'Reshape'                           : _reshape(),
+    'ResizeBilinear'                    : _resize_bilinear(),
+    'ReverseV2'                         : _reverse_v2(),
+    'Round'                             : AttrCvt('round'),
+    'Rsqrt'                             : _rsqrt(),
+    'Select'                            : _where(),
+    'Selu'                              : _selu(),
+    'Shape'                             : _shape(),
+    'Sigmoid'                           : AttrCvt('sigmoid'),
+    'Sign'                              : AttrCvt('sign'),
+    'Slice'                             : _slice(),
+    'Softmax'                           : _softmax(),
     'Split'                             : _split(False),
     'SplitV'                            : _split(True),
+    'Square'                            : _square(),
+    'Squeeze'                           : _squeeze(),
+    'StridedSlice'                      : _stridedSlice(),
+    'Sub'                               : _elemwise('subtract'),
+    'Sum'                               : _sum(),
+    'Tanh'                              : AttrCvt('tanh'),
+    'Tile'                              : _tile(),
+    'Transpose'                         : _transpose(),
     'Unpack'                            : _unpack(),
     'SpaceToBatchND'                    : _space_to_batch_nd(),
     'BatchToSpaceND'                    : _batch_to_space_nd(),
@@ -1620,7 +1636,6 @@ class GraphProto(object):
         self._output_shapes = {}
         self._num_param = 0
         self._num_rnn_layer = False
-        self._outputs_are_0d = {}
         self._input_shapes = {}
         self._loops = {}
         self._branches = {}
@@ -1677,16 +1692,23 @@ class GraphProto(object):
             node_name_prefix = node.name.rsplit('/', 1)[0]
             control_flow_node_map[node_name_prefix].add(node.op)
             if node.op == 'Placeholder':
+                # Give priority to user argument.
                 if shape and node.name in shape:
                     self._input_shapes[node.name] = list(shape[node.name])
-                    continue
-                self._input_shapes[node.name] = \
-                    tensor_util.TensorShapeProtoToList(node.attr['shape'].shape)
-                for idx, dim in enumerate(self._input_shapes[node.name]):
-                    if dim < 0:
-                        self._input_shapes[node.name][idx] = 1
-                        warnings.warn("Use 1 instead of -1 in shape of operator %s."
-                                      % node.name)
+                else:
+                    self._input_shapes[node.name] = \
+                        tensor_util.TensorShapeProtoToList(node.attr['shape'].shape)
+                    for idx, dim in enumerate(self._input_shapes[node.name]):
+                        if dim < 0:
+                            self._input_shapes[node.name][idx] = 1
+                            warnings.warn("Use 1 instead of -1 in shape of operator %s."
+                                          % node.name)
+
+                self._output_shapes[node.name] = [self._input_shapes[node.name]]
+                attr = self._parse_attr(node.attr)
+                self._nodes[node.name] = [_expr.var(node.name,
+                                                    shape=self._input_shapes[node.name],
+                                                    dtype=attr['dtype'].name)]
 
                 # Ignore user's input shape for Non placeholder
             elif node.op == 'Const':
@@ -1703,16 +1725,10 @@ class GraphProto(object):
             # Operator name 'Const' is treated as a parameter to build params dict.
 
             input_shapes = {}
-            input_0d_mismatch = set()
             attr = self._parse_attr(node.attr)
 
             # Variable converted to Const will not have only value attr
             if 'value' in attr and node.op == 'Const':
-                self._output_shapes[node.name] = [self._input_shapes[node.name]]
-            elif shape and node.name in shape:
-                # Give priority to user argument.
-                self._output_shapes[node.name] = [shape[node.name]]
-            elif node.op == 'Placeholder':
                 self._output_shapes[node.name] = [self._input_shapes[node.name]]
             elif '_output_shapes' in attr:
                 self._output_shapes[node.name] = \
@@ -1724,17 +1740,7 @@ class GraphProto(object):
                 # Will infer shapes if the graph is not frozen with add_shapes=True
                 self._output_shapes[node.name] = [None]
 
-            self._outputs_are_0d[node.name] = [ \
-                not shape if isinstance(tshape, list) else False \
-                for tshape in self._output_shapes[node.name]]
-
-            if node.op == "Placeholder":
-                self._output_shapes[node.name] = [self._input_shapes[node.name]]
-                self._nodes[node.name] = [_expr.var(node.name,
-                                                    shape=self._input_shapes[node.name],
-                                                    dtype=attr['dtype'].name)]
-
-            elif node.op == "Const":
+            if node.op == "Const":
                 # All Const nodes are Param nodes, lets parse
                 self._num_param += 1
                 for key, value in node.attr.items():
@@ -1745,7 +1751,7 @@ class GraphProto(object):
 
                 attr = self._parse_attr(node.attr)
 
-            else:
+            elif node.op != "Placeholder":
                 # Pass the parsed shapes instead
                 attr["_output_shapes"] = output_shapes = self._output_shapes[node.name]
 
@@ -1787,13 +1793,8 @@ class GraphProto(object):
                             input_shape = self._output_shapes[node_name][0]
                         inputs.append(in_sym[0])
                         input_shapes[in_sym[0]] = input_shape
-                        # This means the node is 1d in Relay and 0d in TF.
-                        # See `_expand_dims_0d_aware`.
-                        if self._outputs_are_0d[node_name][tensor_slot] and input_shape:
-                            input_0d_mismatch.add(in_sym[0])
 
                 attr['_input_shapes'] = input_shapes
-                attr['_input_0d_mismatch'] = input_0d_mismatch
 
                 if node.op in _control_flow_nodes:
                     op = self._convert_control_flow_operator(node, inputs,

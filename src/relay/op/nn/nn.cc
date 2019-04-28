@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- * 
+ *
  *   http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -28,6 +28,7 @@
 #include <tvm/relay/attrs/nn.h>
 #include <tvm/relay/attrs/image.h>
 #include <topi/nn.h>
+#include <topi/nn/bias_add.h>
 #include <topi/nn/softmax.h>
 #include <topi/nn/flatten.h>
 #include <vector>
@@ -90,7 +91,12 @@ RELAY_REGISTER_OP("nn.bias_add")
 .add_argument("data", "nD Tensor", "Input data.")
 .add_argument("bias", "1D Tensor", "Bias.")
 .set_support_level(1)
-.add_type_rel("BiasAdd", BiasAddRel);
+.add_type_rel("BiasAdd", BiasAddRel)
+.set_attr<FTVMCompute>("FTVMCompute", [](const Attrs& attrs, const Array<Tensor>& inputs,
+                                        const Type& out_type, const Target& target) {
+    const auto* param = attrs.as<BiasAddAttrs>();
+    return tvm::Array<tvm::Tensor>{topi::nn::bias_add(inputs[0], inputs[1], param->axis)};
+});
 
 
 // relay.nn.dense
@@ -125,8 +131,12 @@ bool DenseRel(const Array<Type>& types,
     oshape.Set((oshape.size() - 1), wshape[0]);
   }
 
+  DataType out_dtype = param->out_dtype;
+  if (out_dtype.bits() == 0) {
+    out_dtype = data->dtype;
+  }
   // assign output type
-  reporter->Assign(types[2], TensorTypeNode::make(oshape, data->dtype));
+  reporter->Assign(types[2], TensorTypeNode::make(oshape, out_dtype));
   return true;
 }
 
@@ -134,9 +144,11 @@ bool DenseRel(const Array<Type>& types,
 // Positional relay function to create dense operator used by frontend FFI.
 Expr MakeDense(Expr data,
                Expr weight,
-               IndexExpr units) {
+               IndexExpr units,
+               DataType out_dtype) {
   auto attrs = make_node<DenseAttrs>();
   attrs->units = units;
+  attrs->out_dtype = out_dtype;
   static const Op& op = Op::Get("nn.dense");
   return CallNode::make(op, {data, weight}, Attrs(attrs), {});
 }
