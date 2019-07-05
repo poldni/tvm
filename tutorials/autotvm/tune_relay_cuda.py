@@ -27,7 +27,7 @@ The operator implementation for NVIDIA GPU in TVM is written in template form.
 The template has many tunable knobs (tile factor, unrolling, etc).
 We will tune all convolution and depthwise convolution operators
 in the neural network. After tuning, we produce a log file which stores
-the best knob values for all required operators. When the tvm compiler compiles
+the best knob values for all required operators. When the TVM compiler compiles
 these operators, it will query this log file to get the best knob values.
 
 We also released pre-tuned parameters for some NVIDIA GPUs. You can go to
@@ -45,7 +45,7 @@ to see the results.
 #
 #   pip3 install --user psutil xgboost tornado
 #
-# To make tvm run faster during tuning, it is recommended to use cython
+# To make TVM run faster during tuning, it is recommended to use cython
 # as FFI of tvm. In the root directory of tvm, execute:
 #
 # .. code-block:: bash
@@ -96,7 +96,8 @@ def get_network(name, batch_size):
         # an example for mxnet model
         from mxnet.gluon.model_zoo.vision import get_model
         block = get_model('resnet18_v1', pretrained=True)
-        net, params = relay.frontend.from_mxnet(block, shape={'data': input_shape}, dtype=dtype)
+        mod, params = relay.frontend.from_mxnet(block, shape={'data': input_shape}, dtype=dtype)
+        net = mod[mod.entry_func]
         net = relay.Function(net.params, relay.nn.softmax(net.body), None, net.type_params, net.attrs)
     else:
         raise ValueError("Unsupported network: " + name)

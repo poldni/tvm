@@ -32,10 +32,18 @@ tvm_option(USE_LLVM "Build with LLVM, can be set to specific llvm-config path" O
 tvm_option(USE_STACKVM_RUNTIME "Include stackvm into the runtime" OFF)
 tvm_option(USE_GRAPH_RUNTIME "Build with tiny graph runtime" ON)
 tvm_option(USE_GRAPH_RUNTIME_DEBUG "Build with tiny graph runtime debug mode" OFF)
+tvm_option(USE_RELAY_DEBUG "Building Relay in debug mode..." OFF)
 tvm_option(USE_SGX "Build with SGX" OFF)
 tvm_option(USE_RTTI "Build with RTTI" ON)
 tvm_option(USE_MSVC_MT "Build with MT" OFF)
 tvm_option(INSTALL_DEV "Install compiler infrastructure" OFF)
+tvm_option(HIDE_PRIVATE_SYMBOLS "Compile with -fvisibility=hidden." OFF)
+
+# 3rdparty libraries
+tvm_option(DLPACK_PATH "Path to DLPACK" "3rdparty/dlpack/include")
+tvm_option(DMLC_PATH "Path to DMLC" "3rdparty/dmlc-core/include")
+tvm_option(RANG_PATH "Path to RANG" "3rdparty/rang/include")
+tvm_option(COMPILER_RT_PATH "Path to COMPILER-RT" "3rdparty/compiler-rt")
 
 # Contrib library options
 tvm_option(USE_BLAS "The blas library to be linked" none)
@@ -50,11 +58,12 @@ tvm_option(USE_RANDOM "Build with random support" OFF)
 tvm_option(USE_ANTLR "Build with ANTLR for Relay parsing" OFF)
 
 # include directories
+include_directories(${CMAKE_INCLUDE_PATH})
 include_directories("include")
-include_directories("3rdparty/dlpack/include")
-include_directories("3rdparty/dmlc-core/include")
-include_directories("3rdparty/rang/include")
-include_directories("3rdparty/compiler-rt")
+include_directories(${DLPACK_PATH})
+include_directories(${DMLC_PATH})
+include_directories(${RANG_PATH})
+include_directories(${COMPILER_RT_PATH})
 
 # initial variables
 set(TVM_LINKER_LIBS "")
@@ -88,8 +97,13 @@ else(MSVC)
     set(CMAKE_C_FLAGS "-O0 -g -Wall -fPIC ${CMAKE_C_FLAGS} -rdynamic")
     set(CMAKE_CXX_FLAGS "-O0 -g -Wall -fPIC -std=c++11 ${CMAKE_CXX_FLAGS} -rdynamic")
   else()
-    set(CMAKE_C_FLAGS "-O2 -Wall -fPIC -fvisibility=hidden ${CMAKE_C_FLAGS}")
-    set(CMAKE_CXX_FLAGS "-O2 -Wall -fPIC -fvisibility=hidden -std=c++11 ${CMAKE_CXX_FLAGS}")
+    set(CMAKE_C_FLAGS "-O2 -Wall -fPIC ${CMAKE_C_FLAGS}")
+    set(CMAKE_CXX_FLAGS "-O2 -Wall -fPIC -std=c++11 ${CMAKE_CXX_FLAGS}")
+    if (HIDE_PRIVATE_SYMBOLS)
+      message("Hide private symbols...")
+      set(CMAKE_C_FLAGS "-fvisibility=hidden ${CMAKE_C_FLAGS}")
+      set(CMAKE_CXX_FLAGS "-fvisibility=hidden ${CMAKE_CXX_FLAGS}")
+    endif(HIDE_PRIVATE_SYMBOLS)
   endif ()
   if (CMAKE_CXX_COMPILER_ID MATCHES "GNU" AND
       CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 7.0)
@@ -121,6 +135,8 @@ file(GLOB_RECURSE RELAY_SRCS
     )
 list(APPEND COMPILER_SRCS ${RELAY_SRCS})
 
+file(GLOB DATATYPE_SRCS src/codegen/datatype/*.cc)
+list(APPEND COMPILER_SRCS ${DATATYPE_SRCS})
 
 if(NOT MSVC)
   file(GLOB COMPILER_VERILOG_SRCS src/codegen/verilog/*.cc)
@@ -138,14 +154,23 @@ file(GLOB_RECURSE NNVM_COMPILER_SRCS
 file(GLOB TOPI_SRCS
     topi/src/*.cc
 )
-file(GLOB_RECURSE HALIDEIR_SRCS 3rdparty/HalideIR/src/*.cpp)
+file(GLOB_RECURSE HALIDEIR_SRCS
+  3rdparty/HalideIR/src/base/*.cpp
+  3rdparty/HalideIR/src/ir/*.cpp
+  3rdparty/HalideIR/src/tvm/*.cpp
+)
 list(APPEND COMPILER_SRCS ${HALIDEIR_SRCS})
-file(GLOB RUNTIME_SRCS src/runtime/*.cc)
+file(GLOB RUNTIME_SRCS
+  src/runtime/*.cc
+  src/runtime/vm/*.cc
+)
 
 # Package runtime rules
 if(NOT USE_RTTI)
   add_definitions(-DDMLC_ENABLE_RTTI=0)
 endif()
+
+list(APPEND RUNTIME_SRCS 3rdparty/bfloat16/bfloat16.cc)
 
 if(USE_RPC)
   message(STATUS "Build with RPC support...")
@@ -197,6 +222,14 @@ include(cmake/modules/contrib/HybridDump.cmake)
 add_library(tvm SHARED ${COMPILER_SRCS} ${RUNTIME_SRCS})
 add_library(tvm_topi SHARED ${TOPI_SRCS})
 add_library(tvm_runtime SHARED ${RUNTIME_SRCS})
+
+if(USE_RELAY_DEBUG)
+  message(STATUS "Building Relay in debug mode...")
+  set_target_properties(tvm PROPERTIES COMPILE_DEFINITIONS "USE_RELAY_DEBUG")
+else()
+  set_target_properties(tvm PROPERTIES COMPILE_DEFINITIONS "NDEBUG")
+endif(USE_RELAY_DEBUG)
+
 if(NOT USE_SGX STREQUAL "OFF")
   add_dependencies(tvm sgx_edl)
   add_dependencies(tvm_runtime sgx_edl tvm_t)

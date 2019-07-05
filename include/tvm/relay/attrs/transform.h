@@ -25,6 +25,7 @@
 #define TVM_RELAY_ATTRS_TRANSFORM_H_
 
 #include <tvm/attrs.h>
+#include <tvm/relay/base.h>
 #include <string>
 
 namespace tvm {
@@ -101,7 +102,8 @@ struct TakeAttrs : public tvm::AttrsNode<TakeAttrs> {
     TVM_ATTR_FIELD(mode).set_default("clip")
         .describe("Specify how out-of-bound indices will behave."
                   "clip - clip to the range (default)"
-                  "wrap - wrap around the indices");
+                  "wrap - wrap around the indices"
+                  "fast - no clip or wrap around (user must make sure indices are in-bound)");
   }
 };
 
@@ -272,6 +274,18 @@ struct ShapeOfAttrs : public tvm::AttrsNode<ShapeOfAttrs> {
         .set_default(NullValue<DataType>());
   }
 };
+
+struct SequenceMaskAttrs : public tvm::AttrsNode<SequenceMaskAttrs> {
+  double mask_value;
+  int axis;
+
+  TVM_DECLARE_ATTRS(SequenceMaskAttrs, "relay.attrs.SequenceMaskAttrs") {
+    TVM_ATTR_FIELD(mask_value).set_default(0)
+      .describe("The masking value.");
+    TVM_ATTR_FIELD(axis).set_default(0)
+      .describe("The axis of the length dimension. Can only be 0 or 1.");
+  }
+};  // struct SequenceMaskAttrs.
 
 }  // namespace relay
 }  // namespace tvm

@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- * 
+ *
  *   http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -80,12 +80,6 @@ TryCompare(const Expr& x, int64_t val) {
       return kLT;
     }
   }
-  if (val == 0) {
-    ModularSet dmod = parent_->modular_set(diff);
-    if (dmod->base != 0) {
-      return kNE;
-    }
-  }
   ConstIntBound dbound = parent_->const_int_bound(diff);
   if (dbound->min_value > val) {
     return kGT;
@@ -99,13 +93,26 @@ TryCompare(const Expr& x, int64_t val) {
   if (dbound->max_value <= val) {
     return kLE;
   }
+  if (val == 0) {
+    ModularSet dmod = parent_->modular_set(diff);
+    if (dmod->base != 0) {
+      return kNE;
+    }
+  }
   return kUnknown;
 }
 
 void RewriteSimplifier::Impl::
 Update(const Var& var, const Expr& info, bool override) {
   if (!override) {
-    CHECK(!var_map_.count(var));
+    auto it = var_map_.find(var);
+    if (it != var_map_.end()) {
+      CHECK(Equal(it->second, info))
+          << "Trying to update var \'" << var << "\'"
+          << " with a different value: "
+          << "original=" << it->second
+          << ", new=" << info;
+    }
   }
   var_map_[var] = info;
 }
@@ -147,6 +154,16 @@ Mutate_(const Add* op, const Expr& self) {
     TVM_TRY_REWRITE(min(x - z, y) + z, min(x, y + z));
     TVM_TRY_REWRITE(max(x, y - z) + z, max(x + z, y));
     TVM_TRY_REWRITE(max(x - z, y) + z, max(x, y + z));
+
+    TVM_TRY_REWRITE_IF(min(x, y + z * c1) + z * c2, min(x + z * c2, y),
+                       c1.Eval()->value == -c2.Eval()->value);
+    TVM_TRY_REWRITE_IF(max(x, y + z * c1) + z * c2, max(x + z * c2, y),
+                       c1.Eval()->value == -c2.Eval()->value);
+    TVM_TRY_REWRITE_IF(min(y + z * c1, x) + z * c2, min(x + z * c2, y),
+                       c1.Eval()->value == -c2.Eval()->value);
+    TVM_TRY_REWRITE_IF(max(y + z * c1, x) + z * c2, max(x + z * c2, y),
+                       c1.Eval()->value == -c2.Eval()->value);
+
     TVM_TRY_REWRITE(max(x, y) + min(x, y), x + y);
     TVM_TRY_REWRITE(min(x, y) + max(x, y), x + y);
     TVM_TRY_REWRITE(max(x, y) + min(y, x), x + y);
@@ -188,6 +205,9 @@ Mutate_(const Add* op, const Expr& self) {
     TVM_TRY_RECURSIVE_REWRITE(x + c1 + y, (x + y) + c1);
     TVM_TRY_RECURSIVE_REWRITE(x + (c1 + y), (x + y) + c1);
     TVM_TRY_RECURSIVE_REWRITE((y % c1) + x * c1, x * c1 + (y % c1));
+
+    TVM_TRY_RECURSIVE_REWRITE(x + max(y, z), max(y, z) + x);
+    TVM_TRY_RECURSIVE_REWRITE(x + min(y, z), min(y, z) + x);
   }
 
   // condition rules.
@@ -265,6 +285,11 @@ Mutate_(const Sub* op, const Expr& self) {
     TVM_TRY_REWRITE(min(z, x + y) - x,  min(z - x, y));
     TVM_TRY_REWRITE(min(z, y + x) - x,  min(z - x, y));
 
+    TVM_TRY_REWRITE(max(x + y, z) - x,  max(y, z - x));
+    TVM_TRY_REWRITE(max(y + x, z) - x,  max(y, z - x));
+    TVM_TRY_REWRITE(max(z, x + y) - x,  max(z - x, y));
+    TVM_TRY_REWRITE(max(z, y + x) - x,  max(z - x, y));
+
     TVM_TRY_REWRITE(x - min(x + y, z),  max(0 - y, x - z));
     TVM_TRY_REWRITE(x - min(y + x, z),  max(0 - y, x - z));
     TVM_TRY_REWRITE(x - min(z, x + y),  max(x - z, 0 - y));
@@ -284,11 +309,39 @@ Mutate_(const Sub* op, const Expr& self) {
                        CanProveEqual(((b1 - s2) - (b2 - s1)).Eval(), 0));
 
     // modular-div simplification
-    // Always pre-condition on positive integer domain
+    // Note that c*(x/c) + x % c == x is true for every x and c != 0 even for truncated division
     TVM_TRY_REWRITE_IF(x - (x / c1) * c1, x % c1,
-                       CanProveGreaterEqual(x.Eval(), 0) && c1.Eval()->value > 0);
+                       c1.Eval()->value != 0);
     TVM_TRY_REWRITE_IF((x / c1) * c1 - x, 0 - (x % c1),
-                       CanProveGreaterEqual(x.Eval(), 0) && c1.Eval()->value > 0);
+                       c1.Eval()->value != 0);
+    TVM_TRY_REWRITE_IF(x - ((x + y) / c1) * c1, (x + y) % c1 - y,
+                       c1.Eval()->value != 0);
+    TVM_TRY_REWRITE_IF(((x + y) / c1) * c1 - x, y - ((x + y) % c1),
+                       c1.Eval()->value != 0);
+    TVM_TRY_REWRITE_IF(x - ((x - y) / c1) * c1, (x - y) % c1 + y,
+                       c1.Eval()->value != 0);
+    TVM_TRY_REWRITE_IF(((x - y) / c1) * c1 - x, 0 - (x - y) % c1 - y,
+                       c1.Eval()->value != 0);
+
+    TVM_TRY_REWRITE_IF(x * c2 - (x / c1) * c3, (x % c1) * c2,
+                       c1.Eval()->value != 0 &&
+                       c3.Eval()->value == c1.Eval()->value * c2.Eval()->value);
+    TVM_TRY_REWRITE_IF((x / c1) * c3 - x * c2, 0 - (x % c1) * c2,
+                       c1.Eval()->value != 0 &&
+                       c3.Eval()->value == c1.Eval()->value * c2.Eval()->value);
+    TVM_TRY_REWRITE_IF(x * c2 - ((x + y) / c1) * c3, ((x + y) % c1 - y) * c2,
+                       c1.Eval()->value != 0 &&
+                       c3.Eval()->value == c1.Eval()->value * c2.Eval()->value);
+    TVM_TRY_REWRITE_IF(((x + y) / c1) * c3 - x * c2, (y - ((x + y) % c1)) * c2,
+                       c1.Eval()->value != 0 &&
+                       c3.Eval()->value == c1.Eval()->value * c2.Eval()->value);
+    TVM_TRY_REWRITE_IF(x * c2 - ((x - y) / c1) * c3, ((x - y) % c1 + y) * c2,
+                       c1.Eval()->value != 0 &&
+                       c3.Eval()->value == c1.Eval()->value * c2.Eval()->value);
+    TVM_TRY_REWRITE_IF(((x - y) / c1) * c3 - x * c2, (0 - (x - y) % c1 - y) * c2,
+                       c1.Eval()->value != 0 &&
+                       c3.Eval()->value == c1.Eval()->value * c2.Eval()->value);
+
     TVM_TRY_REWRITE_IF((x + c1) / c3  - (x + c2) / c3,
                        ((x + (c1 % c3)) % c3 + (c1 - c2)) / c3,
                        CanProveGreaterEqual(x.Eval(), -c2.Eval()->value) &&
@@ -348,6 +401,7 @@ Mutate_(const Mul* op, const Expr& self) {
 
     // canonicalization
     TVM_TRY_RECURSIVE_REWRITE(x * (c1 * y), (x * y) * c1);
+    TVM_TRY_RECURSIVE_REWRITE(c1 * x, x * c1);
     TVM_TRY_RECURSIVE_REWRITE_IF(
         (x - y) * c1, (y - x) * (0 - c1),
         c1.Eval()->value < 0);
@@ -367,6 +421,12 @@ Mutate_(const Div* op, const Expr& self) {
   PVar<Integer> c1, c2, c3;
   // Pattern var for lanes in broadcast and ramp
   PVar<int> lanes;
+
+  // x / 2.0 = x * 0.5
+  if (const FloatImm* ptr = op->b.as<FloatImm>()) {
+    CHECK(op->type.is_float());
+    return op->a * make_const(op->b.type(), 1.0 / ptr->value);
+  }
 
   // Vector rules
   if (op->type.lanes() != 1) {
@@ -396,6 +456,16 @@ Mutate_(const Div* op, const Expr& self) {
     // We adopt the default C division uses truncation instead of floordiv.
     // This means most rules need to check non-negativeness of the operands.
 
+    // TryConstFold doesn't work for negative cases because it is also used by legacy
+    // parts of tvm which still assume euclidean div. In this simplifier we assume that the division
+    // is truncated, so perform const folding again.
+    // NOTE: trunc div required
+    if ((c1 / c2).Match(ret)) {
+      int64_t c1val = c1.Eval()->value;
+      int64_t c2val = c2.Eval()->value;
+      return make_const(op->type, c1val / c2val);
+    }
+
     // while it is always true for trunc div
     // restrict to common case(positive div)
     TVM_TRY_REWRITE_IF((x / c1) / c2, x / (c1 * c2),
@@ -415,6 +485,10 @@ Mutate_(const Div* op, const Expr& self) {
         if (c2val % c1val == 0) return (x / (c2 / c1)).Eval();
       }
     }
+
+    TVM_TRY_REWRITE(x / x, OneWithTypeLike(x));
+    TVM_TRY_REWRITE(x * c1 / x, c1);
+    TVM_TRY_REWRITE(c1 * x / x, c1);
 
     // Rules involving 2-operands.
     TVM_TRY_REWRITE_IF((x * c1 + y) / c2, x * (c1 / c2) + y / c2,
@@ -595,10 +669,12 @@ Mutate_(const Mod* op, const Expr& self) {
     TVM_TRY_REWRITE_IF((x * c1 + y) % c2, y % c2,
                        c2.Eval()->value > 0 &&
                        c1.Eval()->value % c2.Eval()->value == 0 &&
+                       CanProveGreaterEqual((x * c1).Eval(), 0) &&
                        CanProveGreaterEqual(y.Eval(), 0));
 
     TVM_TRY_REWRITE_IF((x + c1) % c2, x % c2,
                        c2.Eval()->value > 0 &&
+                       c1.Eval()->value >= 0 &&
                        c1.Eval()->value % c2.Eval()->value == 0 &&
                        CanProveGreaterEqual(x.Eval(), 0));
 
@@ -606,7 +682,13 @@ Mutate_(const Mod* op, const Expr& self) {
                        c2.Eval()->value > 0 &&
                        c1.Eval()->value % c2.Eval()->value == 0 &&
                        CanProveGreaterEqual(x.Eval(), 0) &&
-                       CanProveGreaterEqual(y.Eval(), 0));
+                       CanProveGreaterEqual((y * c1).Eval(), 0));
+
+    // canonicalization: x % c == x % (-c) for truncated division
+    // NOTE: trunc div required
+    TVM_TRY_RECURSIVE_REWRITE_IF(x % c1,
+                                 x % PConst<Expr>(make_const(op->type, -c1.Eval()->value)),
+                                 c1.Eval()->value < 0);
 
     // try modular analysis
     if ((x % c1).Match(ret)) {
@@ -615,6 +697,9 @@ Mutate_(const Mod* op, const Expr& self) {
       if (mod->coeff % c1val == 0 &&
           CanProveGreaterEqual(x.Eval(), 0)) {
         return (mod->base % c1).Eval();
+      } else if (mod->coeff % c1val == 0 &&
+                 mod->base % c1val == 0) {
+        return make_zero(ret.type());
       }
     }
   }
@@ -766,7 +851,9 @@ Mutate_(const Min* op, const Expr& self) {
 
     // canonicalization
     TVM_TRY_RECURSIVE_REWRITE(min(min(x, c1), y), min(min(x, y), c1));
-    TVM_TRY_RECURSIVE_REWRITE(min(c1 - x, c2), c1 - max(x, c2 - c1));
+    TVM_TRY_RECURSIVE_REWRITE_IF(
+        min(c1 - x, c2), c1 - max(x, c1 - c2),
+        c2.Eval()->value != 0);
   }
 
   // condition rules.
@@ -914,7 +1001,8 @@ Mutate_(const Max* op, const Expr& self) {
 
     // canonicalization
     TVM_TRY_RECURSIVE_REWRITE(max(max(x, c1), y), max(max(x, y), c1));
-    TVM_TRY_RECURSIVE_REWRITE(max(c1 - x, c2), c1 - min(x, c2 - c1));
+    TVM_TRY_RECURSIVE_REWRITE_IF(
+        max(c1 - x, c2), c1 - min(x, c1 - c2), c2.Eval()->value != 0);
   }
 
   // condition rules.
@@ -1025,19 +1113,52 @@ Mutate_(const LT* op, const Expr& self) {
     TVM_TRY_REWRITE_IF(x * c1 < y * c1, y < x,
                        c1.Eval()->value < 0);
 
-    // require c1 > 0 to work for any div mode
     TVM_TRY_REWRITE_IF(x * c2 < c1, x < (c1 - 1) / c2 + 1,
                        c1.Eval()->value > 0 &&
                        c2.Eval()->value > 0);
-    TVM_TRY_REWRITE_IF(x / c1 < c2, x < c1 * c2,
-                       c1.Eval()->value > 0 &&
+    // NOTE: trunc div required
+    TVM_TRY_REWRITE_IF(x * c2 < c1, x < c1 / c2,
+                       c1.Eval()->value <= 0 &&
                        c2.Eval()->value > 0);
+    // NOTE: trunc div required (euclidean is ok too, floored is not)
+    TVM_TRY_REWRITE_IF(x * c2 < c1, (c1 - 1) / c2 - 1 < x,
+                       c1.Eval()->value > 0 &&
+                       c2.Eval()->value < 0);
+    // NOTE: trunc div required (floored is ok too, euclidean is not)
+    TVM_TRY_REWRITE_IF(x * c2 < c1, c1 / c2 < x,
+                       c1.Eval()->value <= 0 &&
+                       c2.Eval()->value < 0);
 
+    // NOTE: trunc div required
+    TVM_TRY_REWRITE_IF(c1 < x * c2, (c1 + 1) / c2 - 1 < x,
+                       c1.Eval()->value < 0 &&
+                       c2.Eval()->value > 0);
     TVM_TRY_REWRITE_IF(c1 < x * c2, c1 / c2 < x,
                        c1.Eval()->value >= 0 &&
                        c2.Eval()->value > 0);
+    // NOTE: trunc div required (floored is ok too, euclidean is not)
+    TVM_TRY_REWRITE_IF(c1 < x * c2, x < (c1 + 1) / c2 + 1,
+                       c1.Eval()->value < 0 &&
+                       c2.Eval()->value < 0);
+    // NOTE: trunc div required (euclidean is ok too, floored is not)
+    TVM_TRY_REWRITE_IF(c1 < x * c2, x < c1 / c2,
+                       c1.Eval()->value >= 0 &&
+                       c2.Eval()->value < 0);
+
+    TVM_TRY_REWRITE_IF(x / c1 < c2, x < c1 * c2,
+                       c1.Eval()->value > 0 &&
+                       c2.Eval()->value > 0);
+    // NOTE: trunc div required
+    TVM_TRY_REWRITE_IF(x / c1 < c2, x < c1 * (c2 - 1) + 1,
+                       c1.Eval()->value > 0 &&
+                       c2.Eval()->value <= 0);
+
     TVM_TRY_REWRITE_IF(c1 < x / c2, (c1 + 1) * c2 - 1 < x,
                        c1.Eval()->value >= 0 &&
+                       c2.Eval()->value > 0);
+    // NOTE: trunc div required
+    TVM_TRY_REWRITE_IF(c1 < x / c2, c1 * c2 < x,
+                       c1.Eval()->value < 0 &&
                        c2.Eval()->value > 0);
 
     // division related simplificationx
@@ -1064,6 +1185,12 @@ Mutate_(const LT* op, const Expr& self) {
     TVM_TRY_RECURSIVE_REWRITE(max(x, y) < z, x < z && y < z);
     TVM_TRY_RECURSIVE_REWRITE(z < min(x, y), z < x && z < y);
     TVM_TRY_RECURSIVE_REWRITE(z < max(x, y), z < x || z < y);
+
+    TVM_TRY_RECURSIVE_REWRITE(x < c1 - y, x + y < c1);
+    TVM_TRY_RECURSIVE_REWRITE(x < c1 + y, x - y < c1);
+    TVM_TRY_RECURSIVE_REWRITE(c1 - y < x, c1 < x + y);
+    TVM_TRY_RECURSIVE_REWRITE(c1 + y < x, c1 < x - y);
+
 
     TVM_TRY_REWRITE(x - c1 < 0, x < c1);
     TVM_TRY_REWRITE(x + c1 < c2, x < c2 - c1);
@@ -1197,14 +1324,32 @@ Mutate_(const Or* op, const Expr& self) {
 
 Expr RewriteSimplifier::Impl::
 Mutate_(const Select* op, const Expr& self) {
-  Expr ret = IRMutator::Mutate_(op, self);
+  Expr cond = Mutate(op->condition);
+  Expr true_value, false_value;
+  {
+    With<ConstraintContext> constraint(parent_, cond);
+    true_value = Mutate(op->true_value);
+  }
+  {
+    With<ConstraintContext> constraint(parent_, Mutate(Not::make(cond)));
+    false_value = Mutate(op->false_value);
+  }
+  if (is_zero(cond)) {
+    return false_value;
+  }
+  if (is_one(cond)) {
+    return true_value;
+  }
+  // normal path
+  Expr ret;
+  if (cond.same_as(op->condition) &&
+      true_value.same_as(op->true_value) &&
+      false_value.same_as(op->false_value)) {
+    ret = self;
+  } else {
+    ret = Select::make(cond, true_value, false_value);
+  }
   op = ret.as<Select>();
-  if (is_zero(op->condition)) {
-    return op->false_value;
-  }
-  if (is_one(op->condition)) {
-    return op->true_value;
-  }
   // Pattern var to match any expression
   PVar<Expr> x, y;
   TVM_TRY_REWRITE(select(x, y, y), y);
@@ -1213,7 +1358,37 @@ Mutate_(const Select* op, const Expr& self) {
 
 Expr RewriteSimplifier::Impl::
 Mutate_(const Call* op, const Expr& self) {
-  Expr ret = IRMutator::Mutate_(op, self);
+  // add condition context to if_then_else
+  Expr ret;
+  if (op->is_intrinsic(ir::intrinsic::tvm_if_then_else)) {
+    Expr cond = Mutate(op->args[0]);
+    Expr true_value, false_value;
+    {
+      With<ConstraintContext> constraint(parent_, cond);
+      true_value = Mutate(op->args[1]);
+    }
+    {
+      With<ConstraintContext> constraint(parent_, Mutate(Not::make(cond)));
+      false_value = Mutate(op->args[2]);
+    }
+    if (is_zero(cond)) {
+      return false_value;
+    }
+    if (is_one(cond)) {
+      return true_value;
+    }
+    if (cond.same_as(op->args[0]) &&
+        true_value.same_as(op->args[1]) &&
+        false_value.same_as(op->args[2])) {
+      ret = self;
+    } else {
+      ret = Call::make(op->type, op->name,
+                        {cond, true_value, false_value},
+                        op->call_type);
+    }
+  } else {
+    ret = IRMutator::Mutate_(op, self);
+  }
   op = ret.as<Call>();
   if (op->is_intrinsic(Call::likely) && is_const(op->args[0])) {
     return op->args[0];

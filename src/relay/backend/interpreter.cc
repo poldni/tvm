@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- * 
+ *
  *   http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -27,7 +27,7 @@
 #include <tvm/relay/expr_functor.h>
 #include <tvm/relay/pattern_functor.h>
 #include <tvm/relay/interpreter.h>
-#include <tvm/relay/pass.h>
+#include <tvm/relay/analysis.h>
 #include <tvm/relay/attrs/debug.h>
 #include "compile_engine.h"
 
@@ -103,11 +103,13 @@ TVM_STATIC_IR_FUNCTOR_REGISTER(IRPrinter, vtable)
                               p->stream << "RefValueNode(" << node->value << ")";
                             });
 
-ConstructorValue ConstructorValueNode::make(Constructor constructor,
-                                            tvm::Array<Value> fields) {
+ConstructorValue ConstructorValueNode::make(int tag,
+                                            tvm::Array<Value> fields,
+                                            Constructor constructor) {
   NodePtr<ConstructorValueNode> n = make_node<ConstructorValueNode>();
-  n->constructor = constructor;
+  n->tag = tag;
   n->fields = fields;
+  n->constructor = constructor;
   return ConstructorValue(n);
 }
 
@@ -117,7 +119,7 @@ TVM_REGISTER_API("relay._make.ConstructorValue")
 TVM_STATIC_IR_FUNCTOR_REGISTER(IRPrinter, vtable)
 .set_dispatch<ConstructorValueNode>([](const ConstructorValueNode* node,
                                        tvm::IRPrinter* p) {
-  p->stream << "ConstructorValueNode(" << node->constructor
+  p->stream << "ConstructorValueNode(" << node->tag << ","
             << node->fields << ")";
 });
 
@@ -278,25 +280,29 @@ class Interpreter :
     return TupleValueNode::make(values);
   }
 
-  // TODO(@jroesch): this doesn't support mutual letrec.
-  Value MakeClosure(const Function& func, const Var& letrec_name = Var()) {
+  // TODO(@jroesch): this doesn't support mututal letrec
+  inline Value MakeClosure(const Function& func, Var letrec_name = Var()) {
     tvm::Map<Var, Value> captured_mod;
     Array<Var> free_vars = FreeVars(func);
 
     for (const auto& var : free_vars) {
       // Evaluate the free var (which could be a function call) if it hasn't
       // shown up in a letting binding that has invoked the function.
-      if (!letrec_name.defined() || letrec_name != var) {
-        captured_mod.Set(var, Eval(var));
+      if (letrec_name.defined() && letrec_name == var) {
+        continue;
       }
+
+      captured_mod.Set(var, Eval(var));
     }
 
     // We must use mutation here to build a self referential closure.
     auto closure = ClosureNode::make(captured_mod, func);
     auto mut_closure =
         static_cast<ClosureNode*>(const_cast<Node*>(closure.get()));
-    mut_closure->env.Set(letrec_name, closure);
-    return closure;
+    if (letrec_name.defined()) {
+      mut_closure->env.Set(letrec_name, closure);
+    }
+    return std::move(closure);
   }
 
   Value VisitExpr_(const FunctionNode* func_node) final {
@@ -446,7 +452,7 @@ class Interpreter :
                     "fusing and lowering";
     }
     if (auto con = call->op.as<ConstructorNode>()) {
-      return ConstructorValueNode::make(GetRef<Constructor>(con), args);
+      return ConstructorValueNode::make(con->tag, args, GetRef<Constructor>(con));
     }
     // Now we just evaluate and expect to find a closure.
     Value fn_val = Eval(call->op);
@@ -542,9 +548,8 @@ class Interpreter :
     const ConstructorValueNode* cvn = v.as<ConstructorValueNode>();
     CHECK(cvn) << "need to be a constructor for match";
     CHECK_NE(op->constructor->tag, -1);
-    CHECK_NE(cvn->constructor->tag, -1);
-    if (op->constructor->tag == cvn->constructor->tag) {
-      // todo(M.K.): should use ptr equality but it is broken
+    CHECK_NE(cvn->tag, -1);
+    if (op->constructor->tag == cvn->tag) {
       CHECK_EQ(op->patterns.size(), cvn->fields.size());
       for (size_t i = 0; i < op->patterns.size(); ++i) {
         if (!VisitPattern(op->patterns[i], cvn->fields[i])) {

@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- * 
+ *
  *   http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -23,7 +23,8 @@
  * \brief The global module in Relay.
  */
 #include <tvm/relay/module.h>
-#include <tvm/relay/pass.h>
+#include <tvm/relay/analysis.h>
+#include <tvm/relay/transform.h>
 #include <sstream>
 
 namespace tvm {
@@ -57,10 +58,10 @@ Module ModuleNode::make(tvm::Map<GlobalVar, Function> global_funcs,
   return Module(n);
 }
 
-GlobalVar ModuleNode::GetGlobalVar(const std::string& name) {
+GlobalVar ModuleNode::GetGlobalVar(const std::string& name) const {
   auto it = global_var_map_.find(name);
   CHECK(it != global_var_map_.end())
-      << "Cannot find global var " << name << " in the Module";
+    << "Cannot find global var " << name << " in the Module";
   return (*it).second;
 }
 
@@ -80,7 +81,7 @@ void ModuleNode::AddUnchecked(const GlobalVar& var,
   global_var_map_.Set(var->name_hint, var);
 }
 
-GlobalTypeVar ModuleNode::GetGlobalTypeVar(const std::string& name) {
+GlobalTypeVar ModuleNode::GetGlobalTypeVar(const std::string& name) const {
   auto it = global_type_var_map_.find(name);
   CHECK(it != global_type_var_map_.end())
     << "Cannot find global type var " << name << " in the Module";
@@ -88,8 +89,9 @@ GlobalTypeVar ModuleNode::GetGlobalTypeVar(const std::string& name) {
 }
 
 void ModuleNode::Add(const GlobalVar& var,
-                     const Function& func,
+                     const Function& f,
                      bool update) {
+  Function func = Downcast<Function>(DeDup(f));
   // Type check the item before we add it to the module.
   auto mod = GetRef<Module>(this);
   Function checked_func = InferType(func, mod, var);
@@ -133,26 +135,26 @@ void ModuleNode::Remove(const GlobalVar& var) {
   gvar_node->data.erase(var->name_hint);
 }
 
-Function ModuleNode::Lookup(const GlobalVar& var) {
+Function ModuleNode::Lookup(const GlobalVar& var) const {
   auto it = functions.find(var);
   CHECK(it != functions.end())
       << "There is no definition of " << var->name_hint;
   return (*it).second;
 }
 
-Function ModuleNode::Lookup(const std::string& name) {
+Function ModuleNode::Lookup(const std::string& name) const {
   GlobalVar id = this->GetGlobalVar(name);
   return this->Lookup(id);
 }
 
-TypeData ModuleNode::LookupDef(const GlobalTypeVar& var) {
+TypeData ModuleNode::LookupDef(const GlobalTypeVar& var) const {
   auto it = type_definitions.find(var);
   CHECK(it != type_definitions.end())
     << "There is no definition of " << var->var->name_hint;
   return (*it).second;
 }
 
-TypeData ModuleNode::LookupDef(const std::string& name) {
+TypeData ModuleNode::LookupDef(const std::string& name) const {
   GlobalTypeVar id = this->GetGlobalTypeVar(name);
   return this->LookupDef(id);
 }
@@ -184,7 +186,26 @@ TVM_REGISTER_API("relay._make.Module")
 .set_body_typed(ModuleNode::make);
 
 TVM_REGISTER_API("relay._make.Module_Add")
-.set_body_method<Module>(&ModuleNode::Add);
+.set_body([](TVMArgs args, TVMRetValue* ret) {
+  Module mod = args[0];
+  GlobalVar var = args[1];
+  NodeRef val = args[2];
+  bool update = args[3];
+  CHECK(val->derived_from<ExprNode>());
+  if (val->derived_from<FunctionNode>()) {
+    mod->Add(var, Downcast<Function>(val), update);
+  } else if (val->derived_from<GlobalVarNode>()) {
+    GlobalVar gv = Downcast<GlobalVar>(val);
+    auto mod_copy = Module(make_node<ModuleNode>(*mod.operator->()));
+    mod_copy = transform::EtaExpand()(mod_copy);
+    auto func = mod_copy->Lookup(gv->name_hint);
+    mod->Add(var, Downcast<Function>(func), update);
+  } else {
+    auto func = FunctionNode::make({}, Downcast<Expr>(val), Type(nullptr), {});
+    mod->Add(var, func, update);
+  }
+  *ret = mod;
+});
 
 TVM_REGISTER_API("relay._module.Module_AddDef")
 .set_body_method<Module>(&ModuleNode::AddDef);
@@ -197,34 +218,39 @@ TVM_REGISTER_API("relay._module.Module_GetGlobalTypeVar")
 
 TVM_REGISTER_API("relay._module.Module_Lookup")
 .set_body_typed<Function(Module, GlobalVar)>([](Module mod, GlobalVar var) {
-    return mod->Lookup(var);
-  });
+  return mod->Lookup(var);
+});
 
 TVM_REGISTER_API("relay._module.Module_Lookup_str")
 .set_body_typed<Function(Module, std::string)>([](Module mod, std::string var) {
-    return mod->Lookup(var);
-  });
+  return mod->Lookup(var);
+});
 
 TVM_REGISTER_API("relay._module.Module_LookupDef")
 .set_body_typed<TypeData(Module, GlobalTypeVar)>([](Module mod, GlobalTypeVar var) {
-    return mod->LookupDef(var);
-  });
+  return mod->LookupDef(var);
+});
 
 TVM_REGISTER_API("relay._module.Module_LookupDef_str")
 .set_body_typed<TypeData(Module, std::string)>([](Module mod, std::string var) {
-    return mod->LookupDef(var);
-  });
+  return mod->LookupDef(var);
+});
+
+TVM_REGISTER_API("relay._module.Module_FromExpr")
+.set_body_typed<Module(Expr)>([](Expr e) {
+  return ModuleNode::FromExpr(e);
+});
 
 TVM_REGISTER_API("relay._module.Module_Update")
 .set_body_typed<void(Module, Module)>([](Module mod, Module from) {
-    mod->Update(from);
-  });
+  mod->Update(from);
+});
 
 TVM_STATIC_IR_FUNCTOR_REGISTER(IRPrinter, vtable)
 .set_dispatch<ModuleNode>(
-    [](const ModuleNode *node, tvm::IRPrinter *p) {
-      p->stream << "ModuleNode( " << node->functions << ")";
-    });
+  [](const ModuleNode *node, tvm::IRPrinter *p) {
+    p->stream << "ModuleNode( " << node->functions << ")";
+});
 
 }  // namespace relay
 }  // namespace tvm

@@ -18,10 +18,11 @@
 """Keras frontend."""
 from __future__ import absolute_import as _abs
 import sys
-import tvm
 import numpy as np
-from .. import ir_pass
+import tvm
+from .. import analysis
 from .. import expr as _expr
+from .. import module as _module
 from .. import op as _op
 from ... import nd as _nd
 from .common import ExprTable, new_var
@@ -203,7 +204,6 @@ def _convert_convolution(inexpr, keras_layer, etab):
     else:
         kernel_h, kernel_w, in_channels, n_filters = weightList[0].shape
         weight = weightList[0].transpose([3, 2, 0, 1])
-    dilation = [1, 1]
     if isinstance(keras_layer.dilation_rate, (list, tuple)):
         dilation = [keras_layer.dilation_rate[0], keras_layer.dilation_rate[1]]
     else:
@@ -680,8 +680,8 @@ def from_keras(model, shape=None):
 
     Returns
     -------
-    func : tvm.relay.Function
-        Compatible relay Function.
+    mod : tvm.relay.Module
+        The relay module for compilation.
 
     params : dict of str to tvm.NDArray
         The parameter dict to be used by Relay.
@@ -743,6 +743,6 @@ def from_keras(model, shape=None):
     outexpr = [etab.get_expr(oc[0].name + ":" + str(oc[1]) + ":" + str(oc[2])) \
                for oc in model._output_coordinates]
     outexpr = outexpr[0] if len(outexpr) == 1 else _expr.Tuple(outexpr)
-    func = _expr.Function(ir_pass.free_vars(outexpr), outexpr)
+    func = _expr.Function(analysis.free_vars(outexpr), outexpr)
     params = {k:_nd.array(np.array(v, dtype=np.float32)) for k, v in etab.params.items()}
-    return func, params
+    return _module.Module.from_expr(func), params

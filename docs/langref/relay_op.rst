@@ -135,6 +135,7 @@ This level enables additional math and transform operators.
    tvm.relay.greater_equal
    tvm.relay.less
    tvm.relay.less_equal
+   tvm.relay.all
    tvm.relay.logical_and
    tvm.relay.logical_or
    tvm.relay.logical_not
@@ -165,6 +166,15 @@ This level enables additional math and transform operators.
    tvm.relay.vision.yolo_reorg
 
 
+**Level 6: Algorithm Operators**
+
+.. autosummary::
+   :nosignatures:
+
+   tvm.relay.argsort
+   tvm.relay.topk
+
+
 **Level 10: Temporary Operators**
 
 This level support backpropagation of broadcast operators. It is temporary.
@@ -180,7 +190,10 @@ This level support backpropagation of broadcast operators. It is temporary.
    tvm.relay.device_copy
    tvm.relay.annotation.on_device
    tvm.relay.reverse_reshape
+   tvm.relay.sequence_mask
    tvm.relay.nn.batch_matmul
+   tvm.relay.contrib.adaptive_max_pool2d
+   tvm.relay.contrib.adaptive_avg_pool2d
 
 
 Level 1 Definitions
@@ -267,6 +280,7 @@ Level 4 Definitions
 .. autofunction:: tvm.relay.greater_equal
 .. autofunction:: tvm.relay.less
 .. autofunction:: tvm.relay.less_equal
+.. autofunction:: tvm.relay.all
 .. autofunction:: tvm.relay.logical_and
 .. autofunction:: tvm.relay.logical_or
 .. autofunction:: tvm.relay.logical_not
@@ -294,6 +308,12 @@ Level 5 Definitions
 .. autofunction:: tvm.relay.vision.yolo_reorg
 
 
+Level 6 Definitions
+-------------------
+.. autofunction:: tvm.relay.argsort
+.. autofunction:: tvm.relay.topk
+
+
 Level 10 Definitions
 --------------------
 .. autofunction:: tvm.relay.broadcast_to_like
@@ -304,4 +324,7 @@ Level 10 Definitions
 .. autofunction:: tvm.relay.device_copy
 .. autofunction:: tvm.relay.annotation.on_device
 .. autofunction:: tvm.relay.reverse_reshape
+.. autofunction:: tvm.relay.sequence_mask
 .. autofunction:: tvm.relay.nn.batch_matmul
+.. autofunction:: tvm.relay.contrib.adaptive_max_pool2d
+.. autofunction:: tvm.relay.contrib.adaptive_avg_pool2d

@@ -57,6 +57,7 @@ List of operators
    topi.nn.dilate
    topi.nn.pool
    topi.nn.global_pool
+   topi.nn.adaptive_pool
    topi.nn.upsampling
    topi.nn.softmax
    topi.nn.dense
@@ -87,6 +88,7 @@ List of operators
    topi.not_equal
    topi.greater_equal
    topi.less_equal
+   topi.all
    topi.logical_and
    topi.logical_or
    topi.logical_not
@@ -97,6 +99,9 @@ List of operators
    topi.shape
    topi.layout_transform
    topi.image.resize
+   topi.argsort
+   topi.topk
+   topi.sequence_mask
 
 
 List of schedules
@@ -139,6 +144,7 @@ topi
 .. autofunction:: topi.gather_nd
 .. autofunction:: topi.full
 .. autofunction:: topi.full_like
+.. autofunction:: topi.all
 .. autofunction:: topi.max
 .. autofunction:: topi.sum
 .. autofunction:: topi.min
@@ -160,6 +166,9 @@ topi
 .. autofunction:: topi.tile
 .. autofunction:: topi.shape
 .. autofunction:: topi.layout_transform
+.. autofunction:: topi.argsort
+.. autofunction:: topi.topk
+.. autofunction:: topi.sequence_mask
 
 topi.nn
 ~~~~~~~

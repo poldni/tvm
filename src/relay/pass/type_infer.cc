@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- * 
+ *
  *   http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -42,7 +42,8 @@
 #include <tvm/relay/error.h>
 #include <tvm/relay/expr_functor.h>
 #include <tvm/relay/pattern_functor.h>
-#include <tvm/relay/pass.h>
+#include <tvm/relay/analysis.h>
+#include <tvm/relay/transform.h>
 #include "./pass_util.h"
 #include "type_solver.h"
 #include "../ir/type_functor.h"
@@ -171,6 +172,7 @@ class TypeInferencer : private ExprFunctor<Type(const Expr&)>,
       return it->second.checked_type;
     }
     Type ret = this->VisitExpr(expr);
+    CHECK(ret.defined());
     KindCheck(ret, mod_);
     ResolvedTypeInfo& rti = type_map_[expr];
     rti.checked_type = ret;
@@ -292,6 +294,15 @@ class TypeInferencer : private ExprFunctor<Type(const Expr&)>,
                           GetType(c->rhs),
                           op->span);
     }
+
+    // check completness
+    Match match = GetRef<Match>(op);
+    Array<Pattern> unmatched_cases = UnmatchedCases(match, this->mod_);
+    if (unmatched_cases.size() != 0) {
+      LOG(WARNING) << "Match clause " << match <<  " does not handle the following cases: "
+                   << unmatched_cases;
+    }
+
     return rtype;
   }
 
@@ -358,8 +369,12 @@ class TypeInferencer : private ExprFunctor<Type(const Expr&)>,
 
     // Build a subsitituion map up from the function type and type arguments.
     // Eventually allow the type vars to be passed in.
-    for (size_t i = 0; i < fn_ty->type_params.size(); i++) {
+    for (size_t i = 0; i < ty_args.size(); ++i) {
       subst_map.Set(fn_ty->type_params[i], ty_args[i]);
+    }
+
+    for (size_t i = ty_args.size(); i < fn_ty->type_params.size(); ++i) {
+      subst_map.Set(fn_ty->type_params[i], IncompleteTypeNode::make(Kind::kType));
     }
 
     Type ret_type = fn_ty->ret_type;
@@ -427,13 +442,7 @@ class TypeInferencer : private ExprFunctor<Type(const Expr&)>,
     }
 
     Array<Type> type_args = call->type_args;
-    if (type_args.size() == 0) {
-      for (size_t i = 0; i < fn_ty_node->type_params.size(); i++) {
-        type_args.push_back(IncompleteTypeNode::make(Kind::kType));
-      }
-    }
-
-    if (type_args.size() != fn_ty_node->type_params.size()) {
+    if (type_args.size() > fn_ty_node->type_params.size()) {
       this->ReportFatalError(GetRef<Call>(call),
         RELAY_ERROR("Incorrect number of type args in "
           << call->span << ": "
@@ -796,13 +805,29 @@ Function InferType(const Function& func,
   CHECK(WellFormed(func_ret));
   auto free_tvars = FreeTypeVars(func_ret, mod);
   CHECK(free_tvars.size() == 0)
-    << "Found unbound type variables in " << func << ": " << free_tvars;
+    << "Found unbound type variables in: "
+    << std::endl
+    << AsText(func, true)
+    << std::endl << free_tvars;
   return Downcast<Function>(func_ret);
 }
 
-TVM_REGISTER_API("relay._ir_pass.infer_type")
-.set_body_typed<Expr(const Expr&, const Module&)>([](const Expr& expr, const Module& mod_ref) {
-    return InferType(expr, mod_ref);
-  });
+namespace transform {
+
+Pass InferType() {
+  runtime::TypedPackedFunc<Function(Function, Module, PassContext)> pass_func =
+    [=](Function f, Module m, PassContext pc) {
+      return Downcast<Function>(InferType(f, m));
+  };
+  return CreateFunctionPass(pass_func, 0, "InferType", {});
+}
+
+TVM_REGISTER_API("relay._transform.InferType")
+.set_body_typed<Pass()>([]() {
+  return InferType();
+});
+
+}  // namespace transform
+
 }  // namespace relay
 }  // namespace tvm

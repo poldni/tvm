@@ -645,11 +645,21 @@ class PrettyPrinter :
 
   Doc VisitType_(const FuncTypeNode* node) final {
     Doc doc;
+    doc << "fn ";
+    if (node->type_params.size() != 0) {
+      doc << "<";
+      std::vector<Doc> type_params;
+      for (Type type_param : node->type_params) {
+        type_params.push_back(Print(type_param));
+      }
+      doc << PrintVec(type_params);
+      doc << ">";
+    }
     std::vector<Doc> arg_types;
     for (Type arg_type : node->arg_types) {
       arg_types.push_back(Print(arg_type));
     }
-    return doc << "fn (" << PrintVec(arg_types) << ") -> " << Print(node->ret_type);
+    return doc << "(" << PrintVec(arg_types) << ") -> " << Print(node->ret_type);
   }
 
   Doc VisitType_(const RefTypeNode* node) final {
@@ -774,6 +784,9 @@ class PrettyPrinter::AttrPrinter : public AttrVisitor {
   }
   void Visit(const char* key, runtime::NDArray* value) final {
     LOG(FATAL) << "do not allow NDarray as argument";
+  }
+  void Visit(const char* key, runtime::Object* obj) final {
+    LOG(FATAL) << "do not allow Object as argument";
   }
 
  private:

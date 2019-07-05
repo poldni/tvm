@@ -28,7 +28,7 @@ import json
 import tvm
 from tvm import rpc
 from tvm.contrib import cc
-from pynq import Bitstream
+from vta import program_bitstream
 
 from ..environment import get_env
 from ..pkg_config import PkgConfig
@@ -66,10 +66,13 @@ def server_start():
 
     @tvm.register_func("tvm.contrib.vta.init", override=True)
     def program_fpga(file_name):
+        from pynq import xlnk
+        # Reset xilinx driver
+        xlnk.Xlnk().xlnk_reset()
         path = tvm.get_global_func("tvm.rpc.server.workpath")(file_name)
-        bitstream = Bitstream(path)
-        bitstream.download()
-        logging.info("Program FPGA with %s", file_name)
+        env = get_env()
+        program_bitstream.bitstream_program(env.TARGET, path)
+        logging.info("Program FPGA with %s ", file_name)
 
     @tvm.register_func("tvm.rpc.server.shutdown", override=True)
     def server_shutdown():

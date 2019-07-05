@@ -18,7 +18,7 @@
 from __future__ import absolute_import as _abs
 
 import os
-from tvm import rpc
+from tvm import rpc, autotvm
 from ..environment import get_env
 from . import simulator
 
@@ -31,7 +31,7 @@ def run(run_func):
     """
     env = get_env()
 
-    if env.TARGET == "sim":
+    if env.TARGET in ["sim", "tsim"]:
 
         # Talk to local RPC if necessary to debug RPC server.
         # Compile vta on your host with make at the root.
@@ -42,23 +42,34 @@ def run(run_func):
         # the port it's listening to, e.g. 9090
         local_rpc = int(os.environ.get("VTA_LOCAL_SIM_RPC", "0"))
         if local_rpc:
-            remote = rpc.connect("localhost", local_rpc)
+            remote = rpc.connect("127.0.0.1", local_rpc)
             run_func(env, remote)
         else:
             # Make sure simulation library exists
             # If this fails, build vta on host (make)
             # with TARGET="sim" in the json.config file.
-            assert simulator.enabled()
+            if env.TARGET == "sim":
+                assert simulator.enabled()
             run_func(env, rpc.LocalSession())
 
     elif env.TARGET == "pynq":
 
-        # Run on PYNQ if env variable exists
-        host = os.environ.get("VTA_PYNQ_RPC_HOST", None)
-        port = int(os.environ.get("VTA_PYNQ_RPC_PORT", None))
-        if host and port:
-            remote = rpc.connect(host, port)
+        tracket_host = os.environ.get("TVM_TRACKER_HOST", None)
+        tracket_port = int(os.environ.get("TVM_TRACKER_PORT", None))
+        pynq_host = os.environ.get("VTA_PYNQ_RPC_HOST", None)
+        pynq_port = int(os.environ.get("VTA_PYNQ_RPC_PORT", None))
+        # Run device from fleet node if env variables are defined
+        if tracket_host and tracket_port:
+            remote = autotvm.measure.request_remote(env.TARGET,
+                                                    tracket_host,
+                                                    tracket_port,
+                                                    timeout=10000)
             run_func(env, remote)
         else:
-            raise RuntimeError(
-                "Please set the VTA_PYNQ_RPC_HOST and VTA_PYNQ_RPC_PORT environment variables")
+            # Next, run on PYNQ if env variables are defined
+            if pynq_host and pynq_port:
+                remote = rpc.connect(pynq_host, pynq_port)
+                run_func(env, remote)
+            else:
+                raise RuntimeError(
+                    "Please set the VTA_PYNQ_RPC_HOST and VTA_PYNQ_RPC_PORT environment variables")

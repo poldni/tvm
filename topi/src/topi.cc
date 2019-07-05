@@ -94,7 +94,7 @@ inline bool IsTensorType(TVMArgValue arg) {
 
 TVM_REGISTER_GLOBAL("topi.TEST_create_target")
 .set_body([](TVMArgs args, TVMRetValue *rv) {
-  *rv = tvm::Target::create(args[0]);
+  *rv = tvm::Target::Create(args[0]);
   });
 
 /* Ops from broadcast.h */
@@ -265,6 +265,11 @@ TVM_REGISTER_GLOBAL("topi.prod")
   *rv = topi::prod(args[0], ArrayOrInt(args[1]), args[2]);
   });
 
+TVM_REGISTER_GLOBAL("topi.all")
+.set_body([](TVMArgs args, TVMRetValue *rv) {
+  *rv = topi::all(args[0], ArrayOrInt(args[1]), args[2]);
+  });
+
 /* Ops from transform.h */
 TVM_REGISTER_GLOBAL("topi.expand_dims")
 .set_body([](TVMArgs args, TVMRetValue *rv) {
@@ -331,6 +336,14 @@ TVM_REGISTER_GLOBAL("topi.take")
     *rv = take(args[0], args[1], axis, mode);
   }
   });
+
+TVM_REGISTER_GLOBAL("topi.sequence_mask")
+.set_body([](TVMArgs args, TVMRetValue *rv) {
+  double pad_val = args[2];
+  int axis = args[3];
+  *rv = sequence_mask(args[0], args[1], pad_val, axis);
+});
+
 
 TVM_REGISTER_GLOBAL("topi.where")
 .set_body([](TVMArgs args, TVMRetValue *rv) {
@@ -454,6 +467,13 @@ TVM_REGISTER_GLOBAL("topi.nn.global_pool")
   *rv = nn::global_pool(args[0],
                         static_cast<nn::PoolType>(static_cast<int>(args[1])));
   });
+
+TVM_REGISTER_GLOBAL("topi.nn.adaptive_pool")
+.set_body([](TVMArgs args, TVMRetValue *rv) {
+  *rv = nn::adaptive_pool(args[0], args[1],
+                          static_cast<nn::PoolType>(static_cast<int>(args[2])),
+                          args[3]);
+});
 
 /* Ops from nn/softmax.h */
 TVM_REGISTER_GLOBAL("topi.nn.softmax")
@@ -628,7 +648,7 @@ using FTVMScheduleBuilder = std::function<
  */
 inline PackedFunc WrapSchedule(FTVMScheduleBuilder builder) {
   return PackedFunc([builder](TVMArgs args, TVMRetValue* ret) {
-    auto target = Target::current_target(false);
+    auto target = Target::Current(false);
     Array<Tensor> outs;
     NodeRef argNodeRef = args[0];
     if (argNodeRef->type_index() == outs->type_index()) {
@@ -700,7 +720,7 @@ using FTVMDenseOpBuilder = std::function<tvm::Tensor(const Target& target,
 */
 inline PackedFunc WrapDenseOp(FTVMDenseOpBuilder builder) {
   return PackedFunc([builder](TVMArgs args, TVMRetValue* ret) {
-    auto target = Target::current_target(false);
+    auto target = Target::Current(false);
     Tensor data = args[0];
     Tensor weight = args[1];
     Tensor bias = args[2];

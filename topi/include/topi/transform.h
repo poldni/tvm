@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- * 
+ *
  *   http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -616,7 +616,9 @@ inline Array<Tensor> split_sections(const Tensor& x,
 *
 * \param a The source array.
 * \param indices The indices of the values to extract.
+* \param mode The mode of the operation.
 * \param name The name of the operation.
+* \param mode The mode of to handle out of bound indices.
 * \param tag The tag to mark the operation.
 *
 * \return A Tensor whose op member is the take operation
@@ -639,6 +641,13 @@ inline Tensor take(const Tensor& a,
           auto idx = tvm::min(tvm::max(0, indices(out_index)), a_size - 1);
           return a(UnravelIndex(idx, a_shape));
         }, name, tag);
+  } else if (mode == "fast") {
+    LOG(WARNING) << "Fast mode segfaults when there are out-of-bounds indices. "
+                    "Make sure input indices are in bound";
+    return compute(
+        out_shape, [&](const Array<Var>& out_index) {
+          return a(UnravelIndex(indices(out_index), a_shape));
+        }, name, tag);
   } else {  // mode == "wrap"
     return compute(
         out_shape, [&](const Array<Var>& out_index) {
@@ -648,6 +657,43 @@ inline Tensor take(const Tensor& a,
   }
 }
 
+
+/*!
+* \brief Mask the out-of-boundary elements of each sequence.
+*
+* \param data The source array.
+* \param valid_length The real length of each sequence.
+* \param mask_value The masking value.
+* \param axis The axis of the temporal dimension of the sequence
+* \param name The name of the operation.
+* \param tag The tag to mark the operation.
+*
+* \return A Tensor whose op member is the sequence_mask operation
+*/
+inline Tensor sequence_mask(const Tensor& data,
+                            const Tensor& valid_length,
+                            double mask_value,
+                            int axis,
+                            std::string name = "T_sequence_mask",
+                            std::string tag = kInjective) {
+  CHECK(axis == 0 || axis == 1) << "axis must be either 0 or 1";
+  CHECK_EQ(valid_length->shape.size(), 1) << "valid_length must have ndim=1, i.e., (batch_size,).";
+  auto length_dim = data->shape[axis];
+  auto batch_dim = data->shape[1 - axis];
+  Array<Expr> out_shape = data->shape;
+  Tensor out = compute(
+      out_shape, [&](const Array<Var>& out_index) {
+        Array<Expr> len_index;
+        auto tid = out_index[axis];
+        auto bid = out_index[1 - axis];
+        len_index.push_back(bid);
+        Expr ret = tvm::if_then_else(tvm::cast(valid_length->dtype, tid) >= valid_length(len_index),
+                                     tvm::cast(data->dtype, Expr(mask_value)), data(out_index));
+        return ret;
+      }, name, tag);
+  return out;
+}
+
 /*!
 * \brief Take elements from an array along an axis.
 *
@@ -655,6 +701,7 @@ inline Tensor take(const Tensor& a,
 * \param indices The indices of the values to extract.
 * \param axis The axis over which to select values. By default,
 * the flattened input array is used.
+* \param mode The mode for handling out of bound indices.
 * \param name The name of the operation.
 * \param tag The tag to mark the operation.
 *
@@ -698,6 +745,25 @@ inline Tensor take(const Tensor& a,
           auto idx = tvm::min(tvm::max(0, indices(indices_position)),
                               axis_dim - 1);
           real_indices.push_back(idx);
+          for (size_t j = axis + indices_len; j < out_index.size(); ++j) {
+            real_indices.push_back(out_index[j]);
+          }
+          return a(real_indices);
+        }, name, tag);
+  } else if (mode == "fast") {
+    LOG(WARNING) << "Fast mode segfaults when there are out-of-bounds indices. "
+                    "Make sure input indices are in bound";
+    return compute(
+        out_shape, [&](const Array<Var>& out_index) {
+          Array<Expr> indices_position;
+          for (size_t j = axis; j < static_cast<size_t>(axis+indices_len); ++j) {
+            indices_position.push_back(out_index[j]);
+          }
+          Array<Expr> real_indices;
+          for (size_t j = 0; j < static_cast<size_t>(axis); ++j) {
+            real_indices.push_back(out_index[j]);
+          }
+          real_indices.push_back(indices(indices_position));
           for (size_t j = axis + indices_len; j < out_index.size(); ++j) {
             real_indices.push_back(out_index[j]);
           }

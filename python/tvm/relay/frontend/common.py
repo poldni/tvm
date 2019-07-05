@@ -19,8 +19,8 @@ from __future__ import absolute_import as _abs
 import logging
 from topi.util import get_const_tuple
 from .. import expr as _expr
-from .. import expr as _expr
-from .. import ir_pass
+from .. import module as _module
+from .. import transform as _transform
 from .. import op as _op
 
 
@@ -241,7 +241,7 @@ def get_relay_op(op_name):
             op = None
     else:
         # try search op in various modules
-        for candidate in (_op, _op.nn, _op.image):
+        for candidate in (_op, _op.nn, _op.image, _op.vision):
             op = getattr(candidate, op_name, None)
             if op is not None:
                 break
@@ -286,7 +286,7 @@ class ExprTable(object):
 
 
 class AttrCvt(object):
-    """Common attribute conveter. An AttrConverter instance is a callable:
+    """Common attribute converter. An AttrConverter instance is a callable:
     ```
     attr_converter = AttrConverter(op_name, transforms={'a':'b', 'c':('d', 1)})
     new_op_name, new_attr = attr_converter(attrs)
@@ -300,12 +300,12 @@ class AttrCvt(object):
         `op_name = func(attr)`
     transforms : dict of `new_name, or (new_name, default_value, transform function)`
         If only a new_name is provided, it's like renaming the attribute name.
-        If default_value if provded, then the attribute is considered as optional.
+        If default_value if provided, then the attribute is considered as optional.
         If transform function is provided, the original attribute value is handled
         by transform function.
     excludes : list
         A list of excluded attributes that should `NOT` appear.
-        Raise NotImplementedError if occured.
+        Raise NotImplementedError if occurred.
     disables : list
         A list of attributes that is disabled in relay. Log warnings.
     ignores : list
@@ -407,9 +407,17 @@ def get_name(node):
         name = node.name_hint
     return name
 
+
+def infer_type(node):
+    """A method to infer the type of an intermediate node in the relay graph."""
+    mod = _module.Module.from_expr(node)
+    mod = _transform.InferType()(mod)
+    entry = mod[mod.entry_func]
+    return entry if isinstance(node, _expr.Function) else entry.body
+
 def infer_shape(inputs):
     """A method to get the output shape of an intermediate node in the graph."""
-    out_type = ir_pass.infer_type(inputs)
+    out_type = infer_type(inputs)
     out_shapes = get_const_tuple(out_type.checked_type.shape)
     return out_shapes
 
@@ -417,7 +425,7 @@ def infer_channels(inputs, transpose=False):
     """A hack for getting 'channels' or 'units' since caffe2 does not provide
     these attributes. We check the shape of weights provided to get the number.
     """
-    out_type = ir_pass.infer_type(inputs)
+    out_type = infer_type(inputs)
     out_shapes = [get_const_tuple(out_type.checked_type.shape)]
     channels = out_shapes[0][0] if not transpose else out_shapes[0][1]
     return channels

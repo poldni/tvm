@@ -1,3 +1,20 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
 """
 .. _tutorial-deploy-model-on-android:
 
@@ -35,7 +52,7 @@ from tvm.contrib.download import download_testdata
 #   docker run --pid=host -h tvm -v $PWD:/workspace \
 #          -w /workspace -p 9190:9190 --name tvm -it tvm.demo_android bash
 #
-# You are now inside the container. The cloned tvm directory is mounted on /workspace.
+# You are now inside the container. The cloned TVM directory is mounted on /workspace.
 # At this time, mount the 9190 port used by RPC described later.
 #
 # .. note::
@@ -57,7 +74,7 @@ from tvm.contrib.download import download_testdata
 #         ..
 #   make -j10
 #
-# After building tvm successfully, Please set PYTHONPATH.
+# After building TVM successfully, Please set PYTHONPATH.
 #
 # .. code-block:: bash
 #
@@ -89,7 +106,7 @@ from tvm.contrib.download import download_testdata
 # Now we can register our Android device to the tracker.
 #
 # Follow this `readme page <https://github.com/dmlc/tvm/tree/master/apps/android_rpc>`_ to
-# install tvm rpc apk on the android device.
+# install TVM RPC APK on the android device.
 #
 # Here is an example of config.mk. I enabled OpenCL and Vulkan.
 #
@@ -243,10 +260,10 @@ elif test_target == 'vulkan':
 
 input_name = 'input_1'
 shape_dict = {input_name: x.shape}
-func, params = relay.frontend.from_keras(keras_mobilenet_v2, shape_dict)
+mod, params = relay.frontend.from_keras(keras_mobilenet_v2, shape_dict)
 
 with relay.build_config(opt_level=3):
-    graph, lib, params = relay.build(func, target=target,
+    graph, lib, params = relay.build(mod, target=target,
                                      target_host=target_host, params=params)
 
 # After `relay.build`, you will get three return values: graph,

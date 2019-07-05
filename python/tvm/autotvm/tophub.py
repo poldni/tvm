@@ -42,9 +42,9 @@ PACKAGE_VERSION = {
     'cuda':    "v0.04",
     'rocm':    "v0.02",
     'opencl':  "v0.02",
-    'mali':    "v0.04",
+    'mali':    "v0.05",
 
-    'vta':     "v0.04",
+    'vta':     "v0.05",
 }
 
 logger = logging.getLogger('autotvm')

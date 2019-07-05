@@ -24,21 +24,26 @@ from . import expr
 from . import expr_functor
 from . import module
 from . import adt
-from . import ir_pass
-from .build_module import build, build_config, create_executor, optimize
+from . import analysis
+from . import transform
+from .build_module import build, create_executor
+from .transform import build_config
 from . import prelude
 from . import parser
 from . import debug
 from . import param_dict
+from . import feature
 
 # Root operators
 from .op import Op
 from .op.reduce import *
 from .op.tensor import *
 from .op.transform import *
+from .op.algorithm import *
 from . import nn
 from . import annotation
 from . import vision
+from . import contrib
 from . import image
 from . import frontend
 from . import backend
@@ -95,9 +100,9 @@ Match = adt.Match
 var = expr.var
 const = expr.const
 bind = expr.bind
-module_pass = ir_pass.module_pass
-function_pass = ir_pass.function_pass
-sequential_pass = ir_pass.sequential_pass
+module_pass = transform.module_pass
+function_pass = transform.function_pass
+alpha_equal = analysis.alpha_equal
 
 # ExprFunctor
 ExprFunctor = expr_functor.ExprFunctor
@@ -112,9 +117,12 @@ save_param_dict = param_dict.save_param_dict
 load_param_dict = param_dict.load_param_dict
 
 # Pass manager
-PassInfo = ir_pass.PassInfo
-PassContext = ir_pass.PassContext
-Pass = ir_pass.Pass
-ModulePass = ir_pass.ModulePass
-FunctionPass = ir_pass.FunctionPass
-SequentialPass = ir_pass.SequentialPass
+PassInfo = transform.PassInfo
+PassContext = transform.PassContext
+Pass = transform.Pass
+ModulePass = transform.ModulePass
+FunctionPass = transform.FunctionPass
+Sequential = transform.Sequential
+
+# Feature
+Feature = feature.Feature

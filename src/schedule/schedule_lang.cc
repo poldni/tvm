@@ -47,7 +47,7 @@ size_t FindLeafVar(ArrayNode* all_vars, ArrayNode* leaf_vars, const IterVar& v) 
 
   if (FindNodeRef(all_vars, v) < all_vars->data.size()) {
     LOG(FATAL) << "Operate on iter var " << v
-               << "that has already been splitted";
+               << "that has already been split";
   } else {
     LOG(FATAL) << "Operate on iter var " << v
                << "that is not part of the schedule";
@@ -710,6 +710,10 @@ void ScheduleNode::InitCache() {
     }
   }
   CHECK_EQ(op2stage_cache_.size(), stages.size());
+}
+
+bool ScheduleNode::Contain(const Operation& op) const {
+  return stage_map.find(op) != stage_map.end();
 }
 
 Schedule ScheduleNode::make(Array<Operation> ops) {

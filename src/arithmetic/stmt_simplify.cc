@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- * 
+ *
  *   http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -28,7 +28,6 @@
 #include <tvm/ir_mutator.h>
 #include <tvm/expr_operator.h>
 #include <tvm/arithmetic.h>
-#include "arithmetic/Simplify.h"
 
 namespace tvm {
 namespace arith {
@@ -48,11 +47,11 @@ class StmtSimplifier : public IRMutator {
     Expr condition = this->Mutate(op->condition);
     Stmt then_case, else_case;
     {
-      ConstraintContext ctx(&analyzer_, condition);
+      With<ConstraintContext> ctx(&analyzer_, condition);
       then_case = this->Mutate(op->then_case);
     }
     if (op->else_case.defined()) {
-      ConstraintContext ctx(&analyzer_, Mutate(Not::make(condition)));
+      With<ConstraintContext> ctx(&analyzer_, Mutate(Not::make(condition)));
       else_case = this->Mutate(op->else_case);
     }
     if (is_one(condition)) return then_case;
@@ -94,7 +93,7 @@ class StmtSimplifier : public IRMutator {
   Stmt Mutate_(const AssertStmt* op, const Stmt& s) final {
     Expr condition = this->Mutate(op->condition);
     Expr message = this->Mutate(op->message);
-    ConstraintContext ctx(&analyzer_, condition);
+    With<ConstraintContext> ctx(&analyzer_, condition);
     Stmt body = this->Mutate(op->body);
 
     if (condition.same_as(op->condition) &&
@@ -104,6 +103,19 @@ class StmtSimplifier : public IRMutator {
     } else {
       return AssertStmt::make(condition, message, body);
     }
+  }
+
+  // eliminate useless stores
+  Stmt Mutate_(const Store* op, const Stmt& s) {
+    Stmt stmt = IRMutator::Mutate_(op, s);
+    op = stmt.as<Store>();
+    if (const Load* load = op->value.as<Load>()) {
+      if (load->buffer_var.same_as(op->buffer_var) &&
+          Equal(load->index, op->index)) {
+        return Evaluate::make(0);
+      }
+    }
+    return stmt;
   }
 
  protected:
@@ -145,42 +157,18 @@ Expr CanonicalSimplify(Expr expr, Map<Var, Range> vrange) {
   return analyzer.canonical_simplify(expr);
 }
 
-template<typename T>
-T Simplify_(T a, Map<Var, Range> vrange) {
-  using namespace HalideIR::Internal;
-  Scope<Interval> rscope;
+Expr Simplify(Expr expr, Map<Var, Range> vrange) {
+  arith::Analyzer analyzer;
   for (auto kv : vrange) {
-    Range r = kv.second;
-    rscope.push(
-        kv.first.get(),
-        Interval(r->min,
-                 simplify(r->min + r->extent - make_const(r->min.type(), 1))));
+    analyzer.Bind(kv.first, kv.second);
   }
-  return HalideIR::Internal::simplify(a, true, rscope);
+  expr = analyzer.Simplify(expr);
+  return expr;
 }
 
-
-Expr Simplify(Expr a, Map<Var, Range> vrange) {
-  // Simplify top level reduce.
-  if (const Reduce* r = a.as<Reduce>()) {
-    Array<Expr> new_source;
-    for (auto& e : r->source) {
-      new_source.push_back(Simplify_(e, vrange));
-    }
-    Expr new_condition = Simplify_(r->condition, vrange);
-    if (r->source.same_as(new_source) &&
-        r->condition.same_as(new_condition)) {
-      return a;
-    } else {
-      return Reduce::make(
-              r->combiner, new_source, r->axis, new_condition, r->value_index);
-    }
-  }
-  return Simplify_(a, vrange);
-}
-
-Stmt Simplify(Stmt a, Map<Var, Range> vrange) {
-  return Simplify_(a, vrange);
+Stmt Simplify(Stmt stmt, Map<Var, Range> vrange) {
+  return arith::CanonicalStmtSimplifier().CanonicalSimplify(
+      stmt, vrange);
 }
 }  // namespace ir
 }  // namespace tvm

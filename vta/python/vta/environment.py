@@ -235,14 +235,21 @@ class Environment(object):
         return self.dev.gemm
 
     @property
+    def target(self):
+        return tvm.target.vta(model=self.TARGET)
+
+    @property
     def target_host(self):
         """The target host"""
         if self.TARGET == "pynq":
             return "llvm -target=armv7-none-linux-gnueabihf"
-        if self.TARGET == "sim":
+        if self.TARGET == "sim" or self.TARGET == "tsim":
             return "llvm"
         raise ValueError("Unknown target %s" % self.TARGET)
 
+    @property
+    def target_vta_cpu(self):
+        return tvm.target.arm_cpu(model=self.TARGET)
 
 def get_env():
     """Get the current VTA Environment.

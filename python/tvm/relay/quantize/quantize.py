@@ -21,8 +21,9 @@ import numpy as np
 
 from . import _quantize
 from .. import expr as _expr
-from .. import ir_pass as _ir_pass
-from .. import build_module as _build
+from .. import module as _module
+from .. import analysis as _analysis
+from .. import transform as _transform
 from .. import op as _op
 from ... import make as _make
 from ..base import NodeBase, register_relay_node
@@ -70,11 +71,10 @@ class QConfig(NodeBase):
         "dtype_weight": "int8",
         "dtype_activation": "int32",
         "global_scale": 8.0,
-        "skip_k_conv": 1,
+        "skip_conv_layers": [0],
         "round_for_shift": True,
         "store_lowbit_output": True,
         "debug_enabled_ops": None,
-        "use_stop_fusion": True
     }
 
     # pylint: disable=no-member
@@ -124,7 +124,9 @@ def current_qconfig():
     """Get the current quantization configuration."""
     return _quantize._GetCurrentQConfig()
 
-
+# TODO(tmoreau89, ZihengJiang) the skip parameters are
+# hacky - we should explore a more future-proof way to
+# skip operators based on pattern matching
 def qconfig(**kwargs):
     """Configure the quantization behavior by setting config variables.
 
@@ -136,8 +138,9 @@ def qconfig(**kwargs):
     global_scale: float
         The global scale for calibration.
 
-    skip_k_conv: int
-        The number of skipped conv2d.
+    skip_conv_layers: list
+        Specifying which layers to be skipped. Provide a list of indices
+        that indicate which conv2d layers to leave untouched.
 
     round_for_shift: boolean
         Whether to add bias for rounding during shift.
@@ -146,9 +149,10 @@ def qconfig(**kwargs):
         Whether to store low-bit integer back as output before dequantizing.
         Some accelerators need this, e.g. VTA.
 
-    use_stop_fusion: boolean
-        Whether add stop_fusion when casting to dtype_activation. stop_fusion forces lowbit
-        results to be stored in memory.
+    debug_enabled_ops: None or list of str
+        Partially quantize specified operators for debugging. The default value
+        is None, which means will try to call all operartors' annotate rewrite
+        function.
 
     Returns
     -------
@@ -160,40 +164,38 @@ def qconfig(**kwargs):
     return _make.node("relay.quantize.QConfig", **node_args)
 
 
-CONV_COUNTER = 0
+class AnnotateContext(object):
+    """A global singleton annotate scope"""
+    Current = None
+
+    def __init__(self):
+        self.qnode_map = dict()
+        self._conv2d_counter = 0
+
+    def __enter__(self):
+        self._conv2d_counter = 0
+        return self
+
+    def conv2d_counter(self):
+        """Get the counter for conv2d."""
+        return self._conv2d_counter
+
+    def count_conv2d(self):
+        """Increase the value of the conv2d counter by one."""
+        self._conv2d_counter += 1
+
+    def __exit__(self, ptype, value, traceback):
+        pass
 
 
-def _conv_counter():
-    """Get the global counter for conv2d."""
-    return CONV_COUNTER
+def annotate_context():
+    """Get the global singleton scope"""
+    if AnnotateContext.Current is None:
+        AnnotateContext.Current = AnnotateContext()
+    return AnnotateContext.Current
 
 
-def _set_conv_counter(n):
-    """Set the value of the global conv2d counter."""
-    global CONV_COUNTER
-    CONV_COUNTER = n
-
-
-def annotate(graph):
-    """Given a float32 graph, annotate will rewrite the graph
-    and return back a graph which simulates the error brought by
-    current quantization scheme.
-
-    Parameters
-    ---------
-    graph: Function
-        The original graph
-
-    Returns
-    -------
-    ret: Function
-        The graph after annotation
-    """
-    _set_conv_counter(0)  # reset counter
-    return _quantize.annotate(graph)
-
-
-def calibrate(graph, dataset=None):
+def calibrate(graph, mod=None, ctx=None):
     """The calibrate procedure will try to calculate the content of
     dom_scale, nbit, clip_min, clip_max for every `simulated_quantize`
     operator.
@@ -203,8 +205,11 @@ def calibrate(graph, dataset=None):
     graph: Function
         The simulation graph after annotation.
 
-    dataset: list of dict of Var -> NDArray
-        The calibration dataset.
+    mod: tvm.relay.Module
+        The module where calibration happens on.
+
+    ctx: tvm.relay.PassContext
+        The pass context used for calibration.
 
     Returns
     -------
@@ -245,28 +250,67 @@ def calibrate(graph, dataset=None):
             const_params[nclip_min] = _make_const(- (valid_range - 1))
             const_params[nclip_max] = _make_const((valid_range - 1))
 
-    _ir_pass.post_order_visit(graph, visit_func)
+    _analysis.post_order_visit(graph, visit_func)
     return _expr.bind(graph, const_params)
 
 
-def realize(graph):
-    """The realize pass will transform the simulated quantized
-    graph, which computes with float32 actually, to a real low-bit
-    integer graph. It will replace the simulated_quantize with
-    several fine-grained operators like add, multiply, and shift
-    as more as possible for performance (fusion, etc.)
-
-    Parameters
-    ---------
-    graph: Function
-        The simulated graph after calibrating.
+def annotate():
+    """Given a float32 graph, this pass will rewrite the graph and return
+    a graph which simulates the error brought by the current quantization
+    scheme.
 
     Returns
     -------
-    ret: Function
-        The graph after realization
+    ret: tvm.relay.Pass
+        The registered pass for quantization annotation.
     """
-    return _quantize.realize(graph)
+    return _quantize.QuantizeAnnotate()
+
+
+def realize():
+    """The realize pass will transform the simulated quantized graph, which
+    actually computes with float32, to a real low-bit integer graph. It will
+    replace the `simulated_quantize` with several fine-grained operators like
+    add, multiply, and shift as much as possible for better performance.
+
+    Returns
+    -------
+    ret: tvm.relay.Pass
+        The registered pass for quantization realization.
+    """
+    return _quantize.QuantizeRealize()
+
+
+def rewrite_for_vta():
+    """Performs rewriting for VTA target.
+
+    Returns
+    -------
+    ret: tvm.relay.Pass
+        The registered pass for VTA rewrite.
+    """
+    return _quantize.QuantizeRewriteForVTA()
+
+
+def _bind_params(func, params):
+    """Bind the params to the expression.
+    """
+    name_dict = {}
+    for arg in func.params:
+        name = arg.name_hint
+        if name in name_dict:
+            name_dict[name] = None
+        else:
+            name_dict[name] = arg
+    bind_dict = {}
+    for k, v in params.items():
+        if k not in name_dict:
+            continue
+        arg = name_dict[k]
+        if arg is None:
+            raise ValueError("Multiple args in the function have name %s" % k)
+        bind_dict[arg] = _expr.const(v)
+    return _expr.bind(func, bind_dict)
 
 
 def quantize(graph, params=None, dataset=None):
@@ -292,15 +336,33 @@ def quantize(graph, params=None, dataset=None):
     ret: Function
         The graph after quantization
     """
-    opt_passes = ["SimplifyInference",
-                  "FoldScaleAxis",
-                  "FoldConstant",
-                  "CanonicalizeOps"]
-    with _build.build_config(add_pass=opt_passes):
-        graph = _build.optimize(graph, params=params)
+    if params:
+        graph = _bind_params(graph, params)
 
-    graph = annotate(graph)
-    graph = calibrate(graph, dataset)
-    graph = realize(graph)
-    graph = _ir_pass.fold_constant(graph)
-    return graph
+    mod = _module.Module.from_expr(graph)
+    # Perform "SimplifyInference", "FoldScaleAxis", "FoldConstant", and
+    # "CanonicalizeOps" optimization before quantization.
+    optimize = _transform.Sequential([_transform.SimplifyInference(),
+                                      _transform.FoldConstant(),
+                                      _transform.FoldScaleAxis(),
+                                      _transform.CanonicalizeOps(),
+                                      _transform.FoldConstant()])
+
+    calibrate_pass = _transform.function_pass(calibrate, opt_level=1,
+                                              name="QuantizeCalibrate")
+    # Quantize pass list
+    quant_passes = [annotate(),
+                    calibrate_pass,
+                    realize(),
+                    _transform.FoldConstant()]
+    if current_qconfig().store_lowbit_output:
+        quant_passes = [rewrite_for_vta()] + quant_passes
+    quantize_seq = _transform.Sequential(quant_passes)
+    with _transform.PassContext(opt_level=3,
+                                required_pass=["QuantizeAnnotate",
+                                               "QuantizeCalibrate",
+                                               "QuantizeRealize"]):
+        mod = optimize(mod)
+        mod = quantize_seq(mod)
+
+    return mod[mod.entry_func.name_hint]
